@@ -12,8 +12,6 @@ jobs:
       uses: actions/checkout@v3
       with:
         lfs: false
-        repository: https://codeup.aliyun.com/6299c42d487c500c27f5f963/cv_render.git
-        token: ${{ secrets.YUNXIAO_TOKEN }}
         ref: main
 
     - name: Cache
@@ -23,26 +21,6 @@ jobs:
         path: .git/lfs
         restore-keys: |
           - lfs-cache
-
-    - name: Install git-lfs
-      run: |
-        curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | sudo bash
-        sudo apt-get install git-lfs
-
-    - name: Set Git LFS default remote URL
-      run: |
-        git remote set-url origin https://${{ secrets.LFS_USER_NAME }}:${{ secrets.LFS_PASSWORD }}@codeup.aliyun.com/6299c42d487c500c27f5f963/cv_render.git
-        git config --global credential.helper store
-        git config --global user.email "jiangtingqiang@gmail.com"
-        git config --global user.name "jiangchaoquan123456"
-
-    - name: Initialize Git LFS
-      run: |
-        git lfs install
-
-    - name: Pull LFS files
-      run: |
-        git lfs pull
 
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v2
