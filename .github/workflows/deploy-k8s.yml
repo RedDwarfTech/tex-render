@@ -1,0 +1,79 @@
+name: cv-render-k8s-pro
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v3
+      with:
+        lfs: false
+        repository: https://codeup.aliyun.com/6299c42d487c500c27f5f963/cv_render.git
+        token: ${{ secrets.YUNXIAO_TOKEN }}
+        ref: main
+
+    - name: Cache
+      uses: actions/cache@v3
+      with:
+        key: lfs-cache
+        path: .git/lfs
+        restore-keys: |
+          - lfs-cache
+
+    - name: Install git-lfs
+      run: |
+        curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | sudo bash
+        sudo apt-get install git-lfs
+
+    - name: Set Git LFS default remote URL
+      run: |
+        git remote set-url origin https://${{ secrets.LFS_USER_NAME }}:${{ secrets.LFS_PASSWORD }}@codeup.aliyun.com/6299c42d487c500c27f5f963/cv_render.git
+        git config --global credential.helper store
+        git config --global user.email "jiangtingqiang@gmail.com"
+        git config --global user.name "jiangchaoquan123456"
+
+    - name: Initialize Git LFS
+      run: |
+        git lfs install
+
+    - name: Pull LFS files
+      run: |
+        git lfs pull
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v2
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        registry: ${{ secrets.ALI_DOCKER_HUB_REGISTRY }}
+        username: ${{ secrets.ALIYUN_DOCKER_REPO_USER_NAME }}
+        password: ${{ secrets.ALIYUN_DOCKER_REPO_USER_PASSWORD }}
+
+    - name: Build and push
+      uses: docker/build-push-action@v3
+      with:
+        context: .
+        file: Dockerfile
+        push: true
+        tags: ${{ secrets.ALI_DOCKER_HUB_REGISTRY }}/reddwarf-pro/cv-render:${{ github.sha }} 
+
+    - name: deploy to cluster
+      uses: steebchen/kubectl@v2.0.0
+      with: 
+        config: ${{ secrets.KUBE_CONFIG_DATA }}
+        command: set image --record deployment/cv-render-service cv-render-service=${{ secrets.ALI_DOCKER_HUB_REGISTRY }}/reddwarf-pro/cv-render:${{ github.sha }} -n reddwarf-pro
+
+    - name: verify deployment
+      uses: steebchen/kubectl@v2.0.0
+      with:
+        config: ${{ secrets.KUBE_CONFIG_DATA }}
+        version: v1.21.0
+        command: rollout status deployment/cv-render-service -n reddwarf-pro
