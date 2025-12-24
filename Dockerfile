@@ -17,7 +17,6 @@ COPY --from=builder /home/rust/src/settings-production.toml /app/settings.toml
 COPY --from=builder /home/rust/src/script /app/
 COPY --from=builder /home/rust/src/target/x86_64-unknown-linux-musl/release/cv-render /app/
 RUN mkdir -p /usr/share/fonts/ && mkdir -p /app/config/ && mkdir -p /root/.ssh
-COPY --from=builder /home/rust/src/texmf/tex/latex/ /opt/texlive/texmf-local/tex/latex/
 COPY --from=builder /home/rust/src/log4rs.yaml /app/
 RUN tlmgr update --self && tlmgr install ctex moderncv fontawesome5 fontawesome nth\ 
     academicons multirow arydshln titlesec enumitem makecell relsize\
