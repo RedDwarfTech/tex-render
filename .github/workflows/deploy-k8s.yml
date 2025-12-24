@@ -14,14 +14,6 @@ jobs:
         lfs: false
         ref: main
 
-    - name: Cache
-      uses: actions/cache@v3
-      with:
-        key: lfs-cache
-        path: .git/lfs
-        restore-keys: |
-          - lfs-cache
-
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v2
 
