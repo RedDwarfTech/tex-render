@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cv-render-service
+  namespace: reddwarf-pro
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cv-render-service
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: cv-render-service
+      annotations:
+        kubectl.kubernetes.io/restartedAt: '2024-03-02T21:13:02+08:00'
+    spec:
+      volumes:
+        - name: texhub-server-service-persistent-storage
+          persistentVolumeClaim:
+            claimName: texhub-server-service-pv-claim
+      containers:
+        - name: cv-render-service
+          image: >-
+            registry.cn-hongkong.aliyuncs.com/reddwarf-pro/cv-render:2024-02-19-00-00-06
+          ports:
+            - containerPort: 80
+              protocol: TCP
+            - containerPort: 11015
+              protocol: TCP
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: render-service-pro-config
+                  key: redis_url
+            - name: ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: render-service-pro-config
+                  key: env
+            - name: CV_REMOTE_SSH_PWD
+              valueFrom:
+                configMapKeyRef:
+                  name: render-service-pro-config
+                  key: ssh_pwd
+          resources:
+            limits:
+              cpu: 150m
+              memory: 600Mi
+            requests:
+              cpu: 20m
+              memory: 26Mi
+          volumeMounts:
+            - name: texhub-server-service-persistent-storage
+              mountPath: /opt/data
+              mountPropagation: HostToContainer
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          imagePullPolicy: IfNotPresent
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      securityContext: {}
+      imagePullSecrets:
+        - name: hongkong-regcred
+      schedulerName: default-scheduler
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600

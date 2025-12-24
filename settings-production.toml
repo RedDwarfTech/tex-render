@@ -1,0 +1,18 @@
+[cv]
+cv_compile_base_dir = "/opt/data/cv/output"
+texhub_proj_base_dir = "/opt/data/project"
+texhub_proj_compile_base_dir = "/tmp/texhub-compile"
+cv_api_url = "http://10.98.93.22:11015"
+texhub_api_url = "http://tex-service.reddwarf-pro.svc.cluster.local:8000"
+x_access_token = ""
+compile_group_name = "g-comp-queue"
+compile_stream_redis_key = "texhub-server:proj:s-comp-queue"
+#
+# avaliable with eden | pipeline mode
+# eden mode was the default compile mode and will be deprecated in the future.
+# In eden mode, the compile will be performed in the user current working directory.
+#
+# In pipeline mode, the compile will be performed in a isolated temporary directory.
+# This mode is more secure and stable, and convienient for add some middle steps in the compile pipeline.
+#
+compile_mode="eden"
