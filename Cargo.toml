@@ -30,3 +30,4 @@ redis = { version = "=0.27.2", features = ["streams"] }
 redlock = {git="https://github.com/badboy/redlock-rs.git", branch="main"}
 pq-sys = { version = "0.7.5", features = ["bundled"] }
 openssl-sys = { version = "0.9.109", features = ["vendored"] }
+notify = "6.1.1"

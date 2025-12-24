@@ -4,6 +4,8 @@ use crate::{
     model::project::compile_app_params::CompileAppParams, rest::client::cv_client::http_client,
 };
 use log::{error, info, warn};
+use notify::RecursiveMode;
+use notify::{Event, Watcher};
 use redis;
 use reqwest::Body;
 use reqwest::Client;
@@ -13,12 +15,14 @@ use rust_wheel::{
     texhub::{proj::compile_result::CompileResult, project::get_proj_path},
 };
 use serde_json::json;
+use std::io::{Read, Seek, SeekFrom};
+use std::sync::mpsc;
 use std::{
     env,
     fs::{self, File, OpenOptions},
-    io::{BufRead, BufReader, Error, Write},
+    io::{Error, Write},
     path::Path,
-    process::{Command, Stdio},
+    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::task;
@@ -507,11 +511,40 @@ fn tail_log(
     params: &CompileAppParams,
     compile_dir: &str,
     log_file_path: &str,
-) -> Result<(), String> {
+) -> notify::Result<()> {
     info!("start read file: {}", params.project_id);
-    // read log and push to redis stream
-    if let Ok(log_content) = fs::read_to_string(&log_file_path) {
-        write_log_to_redis_stream(&log_content, params);
+
+    let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
+
+    // Use recommended_watcher() to automatically select the best implementation
+    // for your platform. The `EventHandler` passed to this constructor can be a
+    // closure, a `std::sync::mpsc::Sender`, a `crossbeam_channel::Sender`, or
+    // another type the trait is implemented for.
+    let mut watcher = notify::recommended_watcher(tx)?;
+
+    // Add a path to be watched. All files and directories at that path and
+    // below will be monitored for changes.
+    watcher.watch(Path::new(log_file_path), RecursiveMode::Recursive)?;
+
+    let mut contents = fs::read_to_string(&log_file_path).unwrap();
+    let mut pos = contents.len() as u64;
+
+    // Block forever, printing out events as they come in
+    for res in rx {
+        match res {
+            Ok(event) => {
+                let mut f = File::open(&log_file_path).unwrap();
+                f.seek(SeekFrom::Start(pos)).unwrap();
+
+                pos = f.metadata().unwrap().len();
+
+                contents.clear();
+                f.read_to_string(&mut contents).unwrap();
+                write_log_to_redis_stream(&contents, params);
+                print!("{}", contents);
+            }
+            Err(e) => error!("watch error: {:?}", e),
+        }
     }
     Ok(())
 }
