@@ -6,7 +6,7 @@ use crate::{
 use log::{error, info, warn};
 use notify::RecursiveMode;
 use notify::{Event, Watcher};
-use redis;
+use redis::{self, Connection};
 use reqwest::Body;
 use reqwest::Client;
 use rust_wheel::{
@@ -174,32 +174,7 @@ fn run_xelatex_and_log(
     }
 }
 
-/**
- * Step 4: Write compile log to redis stream (optional).
- * For now, we've already written to the local log file.
- * If redis integration is needed, uncomment and implement.
- */
-fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams) {
-    let redis_url = env::var("REDIS_URL").unwrap();
-    let client = match redis::Client::open(redis_url.as_str()) {
-        Ok(c) => c,
-        Err(e) => {
-            error!(
-                "Failed to create redis client for url {}: {}. Logging locally.",
-                redis_url, e
-            );
-            return;
-        }
-    };
-
-    let mut con = match client.get_connection() {
-        Ok(c) => c,
-        Err(e) => {
-            error!("Failed to get redis connection: {}. Logging locally.", e);
-            return;
-        }
-    };
-
+fn create_consumer_group(params: &CompileAppParams, con: &mut Connection) {
     // stream key namespaced by project id
     let stream_key = format!("texhub:compile:log:{}", params.project_id);
     let consumer_group = &params.project_id; // Use project_id as consumer group name
@@ -213,7 +188,7 @@ fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams) {
         .arg(consumer_group)
         .arg("$")
         .arg("MKSTREAM")
-        .query(&mut con);
+        .query(con);
 
     match create_group_res {
         Ok(_) => {
@@ -238,9 +213,12 @@ fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams) {
             }
         }
     }
+}
 
+fn del_redis_stream(params: &CompileAppParams, con: &mut Connection) {
+    let stream_key = format!("texhub:compile:log:{}", params.project_id);
     // Clear the stream before writing new logs
-    let clear_res: redis::RedisResult<()> = redis::cmd("DEL").arg(&stream_key).query(&mut con);
+    let clear_res: redis::RedisResult<()> = redis::cmd("DEL").arg(&stream_key).query(con);
 
     if let Err(e) = clear_res {
         error!(
@@ -250,7 +228,15 @@ fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams) {
     } else {
         info!("Cleared redis stream: {}", stream_key);
     }
+}
 
+/**
+ * Step 4: Write compile log to redis stream (optional).
+ * For now, we've already written to the local log file.
+ * If redis integration is needed, uncomment and implement.
+ */
+fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams, con: &mut Connection) {
+    let stream_key = format!("texhub:compile:log:{}", params.project_id);
     // Split content into lines and push each as an entry into the stream.
     // Each entry contains fields: msg, file, project_id, proj_created_time
     for line in log_content.lines() {
@@ -262,7 +248,7 @@ fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams) {
             .arg("*")
             .arg("msg")
             .arg(line)
-            .query(&mut con);
+            .query(con);
 
         if let Err(e) = res {
             error!(
@@ -400,28 +386,21 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
         error!("download/unzip failed: {}", e);
         return Some(CompileResult::Failure);
     }
-
     let params_copy = params.clone();
     let compile_dir_copy = compile_dir.clone();
     let log_file_path_copy = log_file_path.clone();
-
     // clear the log file contents before compilation
     // check if exists, if not create
     let _ = fs::write(&log_file_path, "");
-
     task::spawn_blocking(move || {
-        // compile
         if let Err(e) = compile_project(&params_copy, &compile_dir_copy, &log_file_path_copy) {
             error!("compile step failed: {}", e);
             // continue to finalize artifacts
         }
     });
-
-    // finalize artifacts & upload (best-effort)
-    if let Err(e) = tail_log(params, &compile_dir, &log_file_path) {
+    if let Err(e) = tail_log(params, &log_file_path) {
         error!("finalize/upload failed: {}", e);
     }
-
     Some(CompileResult::Success)
 }
 
@@ -507,41 +486,57 @@ fn do_upload_pdf_to_texhub(
     }
 }
 
-fn tail_log(
-    params: &CompileAppParams,
-    compile_dir: &str,
-    log_file_path: &str,
-) -> notify::Result<()> {
-    info!("start read file: {}", params.project_id);
+fn tail_log(params: &CompileAppParams, log_file_path: &str) -> notify::Result<()> {
+    // Create Redis client and connection once, reuse for all log writes
+    let redis_url = env::var("REDIS_URL").unwrap();
+    let client = match redis::Client::open(redis_url.as_str()) {
+        Ok(c) => c,
+        Err(e) => {
+            error!(
+                "Failed to create redis client for url {}: {}. Logging locally.",
+                redis_url, e
+            );
+            return Err(notify::Error::generic(&format!(
+                "Redis client creation failed: {}",
+                e
+            )));
+        }
+    };
+
+    let mut con = match client.get_connection() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to get redis connection: {}. Logging locally.", e);
+            return Err(notify::Error::generic(&format!(
+                "Redis connection failed: {}",
+                e
+            )));
+        }
+    };
+    del_redis_stream(&params, &mut con);
+    create_consumer_group(&params, &mut con);
 
     let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
-
     // Use recommended_watcher() to automatically select the best implementation
     // for your platform. The `EventHandler` passed to this constructor can be a
     // closure, a `std::sync::mpsc::Sender`, a `crossbeam_channel::Sender`, or
     // another type the trait is implemented for.
     let mut watcher = notify::recommended_watcher(tx)?;
-
     // Add a path to be watched. All files and directories at that path and
     // below will be monitored for changes.
     watcher.watch(Path::new(log_file_path), RecursiveMode::Recursive)?;
-
     let mut contents = fs::read_to_string(&log_file_path).unwrap();
     let mut pos = contents.len() as u64;
-
     // Block forever, printing out events as they come in
     for res in rx {
         match res {
             Ok(event) => {
                 let mut f = File::open(&log_file_path).unwrap();
                 f.seek(SeekFrom::Start(pos)).unwrap();
-
                 pos = f.metadata().unwrap().len();
-
                 contents.clear();
                 f.read_to_string(&mut contents).unwrap();
-                write_log_to_redis_stream(&contents, params);
-                print!("{}", contents);
+                write_log_to_redis_stream(&contents, params, &mut con);
             }
             Err(e) => error!("watch error: {:?}", e),
         }
