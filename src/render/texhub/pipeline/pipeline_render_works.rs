@@ -263,7 +263,6 @@ fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams, con: 
  * Step 5: Upload the compiled PDF file to texhub server via HTTP.
  * Uses multipart form data or binary upload.
  */
-#[allow(dead_code)]
 async fn upload_pdf_to_texhub(pdf_path: &str, project_id: &str) -> Result<(), String> {
     let texhub_api_url = get_app_config("cv.texhub_api_url");
     let upload_url = format!("{}/inner-tex/project/upload-output", texhub_api_url);
@@ -345,7 +344,6 @@ async fn upload_pdf_to_texhub(pdf_path: &str, project_id: &str) -> Result<(), St
     }
 }
 
-#[allow(dead_code)]
 fn write_end_marker(file: &mut std::fs::File, params: &CompileAppParams) {
     let wr = file.write_all("====END====\n".as_bytes());
     if let Err(e) = wr {
@@ -537,9 +535,14 @@ fn tail_log(params: &CompileAppParams, log_file_path: &str) -> notify::Result<()
                 contents.clear();
                 f.read_to_string(&mut contents).unwrap();
                 write_log_to_redis_stream(&contents, params, &mut con);
+                if contents.contains("====END====") {
+                    info!("Detected end marker in log, stopping tail.");
+                    break;
+                }
             }
             Err(e) => error!("watch error: {:?}", e),
         }
     }
+    drop(watcher);
     Ok(())
 }
