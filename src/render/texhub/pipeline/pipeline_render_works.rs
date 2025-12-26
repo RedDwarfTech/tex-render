@@ -170,6 +170,7 @@ fn run_xelatex_and_log(
             .unwrap_or_else(|| "unknown".to_string());
         let msg = format!("xelatex exited with code: {}", exit_code);
         error!("{}", msg);
+        let _ = open_write_end_marker(log_file_path, params);
         Err(msg)
     }
 }
