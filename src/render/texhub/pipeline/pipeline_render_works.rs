@@ -69,7 +69,6 @@ fn run_xelatex_in_dir(tex_file: &str, dir: &str) -> Result<std::process::Output,
  * Downloads from URL: /inner-tex/project/download/{project_id}
  * Returns path to the downloaded zip file.
  */
-#[allow(dead_code)]
 async fn download_tex_project_zip(project_id: &str, temp_dir: &str) -> Result<String, String> {
     let texhub_api_url = get_app_config("cv.texhub_api_url");
     let url = format!("{}/inner-tex/project/download", texhub_api_url);
@@ -169,6 +168,10 @@ async fn run_xelatex_and_log(
             .unwrap_or_else(|| "unknown".to_string());
         let msg = format!("xelatex exited with code: {}", exit_code);
         error!("{}", msg);
+        update_queue_compile_result(
+            params.clone(),
+            Some(CompileResult::Failure),
+        ).await;
         let _ = open_write_end_marker(log_file_path, params);
         Err(msg)
     }
@@ -391,8 +394,12 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
     // check if exists, if not create
     let _ = fs::write(&log_file_path, "");
     task::spawn_blocking(move || {
-        // Create a runtime inside spawn_blocking to run async compile_project
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        // Create a multi-threaded runtime inside spawn_blocking to run async compile_project
+        // reqwest requires a multi-threaded runtime to properly handle HTTP requests
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         if let Err(e) = rt.block_on(compile_project(&params_copy, &compile_dir_copy, &log_file_path_copy)) {
             error!("compile step failed: {}", e);
         }

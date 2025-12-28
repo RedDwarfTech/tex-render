@@ -48,7 +48,11 @@ pub async fn compile_tex_from_mq(params: CompileAppParams) {
         warn!("Using pipeline nfs compile mode for params: {:?}", params);
         task::spawn_blocking(move || {
             let compile_result = render_texhub_project_pipeline_nfs(&params);
-            let rt = tokio::runtime::Runtime::new().unwrap();
+            // reqwest requires a multi-threaded runtime to properly handle HTTP requests
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
             rt.block_on(update_queue_compile_result(params, compile_result));
         });
     }
@@ -56,14 +60,22 @@ pub async fn compile_tex_from_mq(params: CompileAppParams) {
         warn!("Using pipeline compile mode for params: {:?}", params);
         task::spawn_blocking(move || {
             let compile_result = render_texhub_project_pipeline(&params);
-            let rt = tokio::runtime::Runtime::new().unwrap();
+            // reqwest requires a multi-threaded runtime to properly handle HTTP requests
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
             rt.block_on(update_queue_compile_result(params, compile_result));
         });
     } else {
         warn!("Using legacy compile mode for params: {:?}", params);
         task::spawn_blocking(move || {
             let compile_result = render_texhub_project_mq(&params);
-            let rt = tokio::runtime::Runtime::new().unwrap();
+            // reqwest requires a multi-threaded runtime to properly handle HTTP requests
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
             rt.block_on(update_queue_compile_result(params, compile_result));
         });
     }

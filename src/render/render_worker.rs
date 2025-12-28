@@ -125,7 +125,11 @@ pub fn render_texhub_project_mq(params: &CompileAppParams) -> Option<CompileResu
     }
     // flush newest compile status before the disk log end flag
     // avoid query to compiling status when send end flag to the client
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    // reqwest requires a multi-threaded runtime to properly handle HTTP requests
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     rt.block_on(update_queue_compile_status(
         params.to_owned(),
         TeXFileCompileStatus::Compiling,
