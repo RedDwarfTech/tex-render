@@ -152,10 +152,7 @@ async fn run_xelatex_and_log(
         info!("xelatex compilation succeeded");
         // copy pdf to local output
         let pdf_path = copy_pdf_to_output_dir(params, &compile_dir.to_string());
-        update_queue_compile_result(
-            params.clone(),
-            Some(CompileResult::Success),
-        ).await;
+        update_queue_compile_result(params.clone(), Some(CompileResult::Success)).await;
 
         let project_id = params.project_id.clone();
         do_upload_pdf_to_texhub(&pdf_path, &project_id, params, compile_dir);
@@ -168,10 +165,7 @@ async fn run_xelatex_and_log(
             .unwrap_or_else(|| "unknown".to_string());
         let msg = format!("xelatex exited with code: {}", exit_code);
         error!("{}", msg);
-        update_queue_compile_result(
-            params.clone(),
-            Some(CompileResult::Failure),
-        ).await;
+        update_queue_compile_result(params.clone(), Some(CompileResult::Failure)).await;
         let _ = open_write_end_marker(log_file_path, params);
         Err(msg)
     }
@@ -400,9 +394,16 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
             .enable_all()
             .build()
             .unwrap();
-        if let Err(e) = rt.block_on(compile_project(&params_copy, &compile_dir_copy, &log_file_path_copy)) {
+        if let Err(e) = rt.block_on(compile_project(
+            &params_copy,
+            &compile_dir_copy,
+            &log_file_path_copy,
+        )) {
             error!("compile step failed: {}", e);
         }
+
+        // 建议：再 sleep 一小会儿，让后台任务有机会完成（hacky）
+        std::thread::sleep(std::time::Duration::from_millis(5000));
     });
     if let Err(e) = tail_log(params, &log_file_path) {
         error!("finalize/upload failed: {}", e);
