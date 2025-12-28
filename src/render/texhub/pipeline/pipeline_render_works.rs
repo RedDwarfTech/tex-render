@@ -132,7 +132,7 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
 /**
  * Step 3 (enhanced): Run xelatex and capture stdout/stderr to a log file.
  */
-fn run_xelatex_and_log(
+async fn run_xelatex_and_log(
     tex_file: &str,
     compile_dir: &str,
     log_file_path: &str,
@@ -153,11 +153,10 @@ fn run_xelatex_and_log(
         info!("xelatex compilation succeeded");
         // copy pdf to local output
         let pdf_path = copy_pdf_to_output_dir(params, &compile_dir.to_string());
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(update_queue_compile_result(
+        update_queue_compile_result(
             params.clone(),
             Some(CompileResult::Success),
-        ));
+        ).await;
 
         let project_id = params.project_id.clone();
         do_upload_pdf_to_texhub(&pdf_path, &project_id, params, compile_dir);
@@ -392,9 +391,10 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
     // check if exists, if not create
     let _ = fs::write(&log_file_path, "");
     task::spawn_blocking(move || {
-        if let Err(e) = compile_project(&params_copy, &compile_dir_copy, &log_file_path_copy) {
+        // Create a runtime inside spawn_blocking to run async compile_project
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        if let Err(e) = rt.block_on(compile_project(&params_copy, &compile_dir_copy, &log_file_path_copy)) {
             error!("compile step failed: {}", e);
-            // continue to finalize artifacts
         }
     });
     if let Err(e) = tail_log(params, &log_file_path) {
@@ -432,13 +432,13 @@ fn download_and_unzip(
     Ok(())
 }
 
-fn compile_project(
+async fn compile_project(
     params: &CompileAppParams,
     compile_dir: &str,
     log_file_path: &str,
 ) -> Result<(), String> {
     let tex_file_name = tex_filename_from_path(&params.file_path);
-    return run_xelatex_and_log(&tex_file_name, &compile_dir, log_file_path, params);
+    return run_xelatex_and_log(&tex_file_name, &compile_dir, log_file_path, params).await;
 }
 
 fn open_write_end_marker(log_file_path: &str, params: &CompileAppParams) -> Result<(), String> {
