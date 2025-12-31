@@ -1,4 +1,4 @@
-use crate::controller::tex::tex_controller::update_queue_compile_result;
+use crate::controller::tex::tex_controller::{update_queue_compile_result, update_queue_compile_result_sync};
 use crate::util::cv_util::copy_pdf_to_output_dir;
 use crate::{
     model::project::compile_app_params::CompileAppParams, rest::client::cv_client::http_client,
@@ -152,7 +152,7 @@ async fn run_xelatex_and_log(
         info!("xelatex compilation succeeded");
         // copy pdf to local output
         let pdf_path = copy_pdf_to_output_dir(params, &compile_dir.to_string());
-        update_queue_compile_result(params.clone(), Some(CompileResult::Success)).await;
+        update_queue_compile_result_sync(params.clone(), Some(CompileResult::Success));
 
         let project_id = params.project_id.clone();
         do_upload_pdf_to_texhub(&pdf_path, &project_id, params, compile_dir);

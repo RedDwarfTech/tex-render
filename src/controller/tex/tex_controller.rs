@@ -5,7 +5,7 @@ use crate::render::render_worker::{
 };
 use crate::render::texhub::pipeline::pipeline_nfs_render_works::render_texhub_project_pipeline_nfs;
 use crate::render::texhub::pipeline::pipeline_render_works::render_texhub_project_pipeline;
-use crate::rest::client::cv_client::update_queue_status;
+use crate::rest::client::cv_client::{update_queue_status, update_queue_status_sync};
 use crate::rest::user::config::config_fetcher::get_one_user_config;
 use actix_web::http::header::{CacheControl, CacheDirective};
 use actix_web::{web, HttpResponse, Responder};
@@ -94,6 +94,23 @@ pub async fn update_queue_compile_result(
         Some(compile_result.unwrap() as i32),
     )
     .await;
+    if !u_result {
+        error!("Failed to update result status, params: {:?}", &params_arc)
+    }
+}
+
+pub fn update_queue_compile_result_sync(
+    params_arc: CompileAppParams,
+    compile_result: Option<CompileResult>,
+) {
+    if compile_result.is_none() {
+        warn!("compile result is none, params:{:?}", params_arc);
+    }
+    let u_result = update_queue_status_sync(
+        TeXFileCompileStatus::Compiled as i32,
+        &params_arc.qid,
+        Some(compile_result.unwrap() as i32),
+    );
     if !u_result {
         error!("Failed to update result status, params: {:?}", &params_arc)
     }

@@ -35,6 +35,19 @@ pub fn http_client() -> &'static reqwest::Client {
     })
 }
 
+pub fn http_client_sync() -> &'static reqwest::blocking::Client {
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .pool_idle_timeout(std::time::Duration::from_secs(30))
+            .pool_max_idle_per_host(20)
+            .build()
+            .expect("Failed to build reqwest client")
+    })
+}
+
 pub async fn get_queue_cv() {
     let client = Client::new();
     let url_path = "/cv/gen/v1/pick";
@@ -177,6 +190,57 @@ pub async fn update_queue_status(
     match response {
         Ok(r) => {
             let resp_text = r.text().await.unwrap();
+            let comp_resp: Result<ApiResponse<TexCompQueue>, serde_json::Error> =
+                serde_json::from_str(resp_text.as_str());
+            if let Err(parse_err) = comp_resp.as_ref() {
+                error!(
+                    "parse response error,{}, resp text: {}, url: {}",
+                    parse_err,
+                    resp_text.as_str(),
+                    url
+                );
+                return false;
+            }
+            if !success(&comp_resp.as_ref().unwrap()) {
+                error!(
+                    "update queue status error: {}",
+                    serde_json::to_string(&comp_resp.unwrap()).unwrap()
+                );
+                return false;
+            }
+            return true;
+        }
+        Err(e) => {
+            error!("update queue error: {}", e);
+            return false;
+        }
+    }
+}
+
+pub fn update_queue_status_sync(
+    comp_status: i32,
+    record_id: &i64,
+    compile_result: Option<i32>,
+) -> bool {
+    let url_path = format!("{}", "/tex/project/compile/status");
+    let url = format!("{}{}", get_app_config("cv.texhub_api_url"), url_path);
+    let req_params: TexProjRequest = TexProjRequest {
+        comp_status: comp_status,
+        id: record_id.to_owned(),
+        comp_result: if compile_result.is_some() {
+            compile_result.unwrap()
+        } else {
+            CompileResult::Failure as i32
+        },
+    };
+    let response = http_client_sync()
+        .put(&url)
+        .headers(construct_headers())
+        .body(serde_json::to_string(&req_params).unwrap())
+        .send();
+    match response {
+        Ok(r) => {
+            let resp_text = r.text().unwrap();
             let comp_resp: Result<ApiResponse<TexCompQueue>, serde_json::Error> =
                 serde_json::from_str(resp_text.as_str());
             if let Err(parse_err) = comp_resp.as_ref() {

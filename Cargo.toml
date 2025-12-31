@@ -10,7 +10,7 @@ tokio = { version = "1.48.0", features = ["full"] }
 config = { version = "0.11.0"}
 rust_wheel = { git = "https://github.com/jiangxiaoqiang/rust_wheel.git", branch = "main", features = ["model","common","rwconfig","texhub"]}
 chrono = "0.4"
-reqwest = { version = "0.11.18", features = ["json"] }
+reqwest = { version = "0.11.18", features = ["json","blocking"] }
 serde = { version = "1.0.64", features = ["derive"] }
 serde_json = "1.0.64"
 uuid = { version = "0.8.2", features = ["v4"] }
