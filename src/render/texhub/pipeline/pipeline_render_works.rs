@@ -165,7 +165,7 @@ async fn run_xelatex_and_log(
             .unwrap_or_else(|| "unknown".to_string());
         let msg = format!("xelatex exited with code: {}", exit_code);
         error!("{}", msg);
-        update_queue_compile_result_sync(params.clone(), Some(CompileResult::Failure)).await;
+        update_queue_compile_result_sync(params.clone(), Some(CompileResult::Failure));
         let _ = open_write_end_marker(log_file_path, params);
         Err(msg)
     }
@@ -390,10 +390,7 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
     task::spawn_blocking(move || {
         // Create a multi-threaded runtime inside spawn_blocking to run async compile_project
         // reqwest requires a multi-threaded runtime to properly handle HTTP requests
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Runtime::new().map_err(|e| format!("create runtime failed: {}", e)).unwrap();
         if let Err(e) = rt.block_on(compile_project(
             &params_copy,
             &compile_dir_copy,
@@ -401,9 +398,6 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
         )) {
             error!("compile step failed: {}", e);
         }
-
-        // 建议：再 sleep 一小会儿，让后台任务有机会完成（hacky）
-        std::thread::sleep(std::time::Duration::from_millis(5000));
     });
     if let Err(e) = tail_log(params, &log_file_path) {
         error!("finalize/upload failed: {}", e);
