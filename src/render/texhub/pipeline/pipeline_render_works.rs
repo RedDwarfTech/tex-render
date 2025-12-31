@@ -165,7 +165,7 @@ async fn run_xelatex_and_log(
             .unwrap_or_else(|| "unknown".to_string());
         let msg = format!("xelatex exited with code: {}", exit_code);
         error!("{}", msg);
-        update_queue_compile_result(params.clone(), Some(CompileResult::Failure)).await;
+        update_queue_compile_result_sync(params.clone(), Some(CompileResult::Failure)).await;
         let _ = open_write_end_marker(log_file_path, params);
         Err(msg)
     }
