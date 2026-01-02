@@ -1,6 +1,7 @@
 use crate::controller::tex::tex_controller::{
     update_queue_compile_result, update_queue_compile_result_sync,
 };
+use crate::rest::client::cv_client::http_client_sync;
 use crate::util::cv_util::copy_pdf_to_output_dir;
 use crate::{
     model::project::compile_app_params::CompileAppParams, rest::client::cv_client::http_client,
@@ -264,7 +265,7 @@ fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams, con: 
  * Step 5: Upload the compiled PDF file to texhub server via HTTP.
  * Uses multipart form data or binary upload.
  */
-async fn upload_pdf_to_texhub(pdf_path: &str, project_id: &str) -> Result<(), String> {
+fn upload_pdf_to_texhub(pdf_path: &str, project_id: &str) -> Result<(), String> {
     let texhub_api_url = get_app_config("cv.texhub_api_url");
     let upload_url = format!("{}/inner-tex/project/upload-output", texhub_api_url);
 
@@ -310,12 +311,11 @@ async fn upload_pdf_to_texhub(pdf_path: &str, project_id: &str) -> Result<(), St
         "Uploading PDF to texhub at URL: {} (multipart manual)",
         upload_url
     );
-    match http_client()
+    match http_client_sync()
         .post(&upload_url)
         .header("Content-Type", content_type)
-        .body(Body::from(body))
+        .body(body)
         .send()
-        .await
     {
         Ok(resp) => {
             if resp.status().is_success() {
@@ -324,7 +324,7 @@ async fn upload_pdf_to_texhub(pdf_path: &str, project_id: &str) -> Result<(), St
             } else {
                 let status = resp.status();
                 let headers = resp.headers().clone();
-                let body_text = match resp.text().await {
+                let body_text = match resp.text() {
                     Ok(t) => t,
                     Err(e) => format!("<failed to read body: {}>", e),
                 };
@@ -485,7 +485,7 @@ fn do_upload_pdf_to_texhub(
     );
     info!("Uploading compiled PDF from path: {}", pdf_path);
     if Path::new(&pdf_path).exists() {
-        upload_pdf_to_texhub(&pdf_path, &params.project_id);
+        let _ = upload_pdf_to_texhub(&pdf_path, &params.project_id);
     } else {
         warn!("Compiled PDF not found at: {}", pdf_path);
     }
