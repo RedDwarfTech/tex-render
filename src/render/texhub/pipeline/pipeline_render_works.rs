@@ -387,10 +387,8 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
     // clear the log file contents before compilation
     // check if exists, if not create
     let _ = fs::write(&log_file_path, "");
+    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("create runtime failed: {}", e)).unwrap();
     task::spawn_blocking(move || {
-        // Create a multi-threaded runtime inside spawn_blocking to run async compile_project
-        // reqwest requires a multi-threaded runtime to properly handle HTTP requests
-        let rt = tokio::runtime::Runtime::new().map_err(|e| format!("create runtime failed: {}", e)).unwrap();
         if let Err(e) = rt.block_on(compile_project(
             &params_copy,
             &compile_dir_copy,
