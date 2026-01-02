@@ -1,4 +1,6 @@
-use crate::controller::tex::tex_controller::{update_queue_compile_result, update_queue_compile_result_sync};
+use crate::controller::tex::tex_controller::{
+    update_queue_compile_result, update_queue_compile_result_sync,
+};
 use crate::util::cv_util::copy_pdf_to_output_dir;
 use crate::{
     model::project::compile_app_params::CompileAppParams, rest::client::cv_client::http_client,
@@ -138,6 +140,8 @@ async fn run_xelatex_and_log(
     params: &CompileAppParams,
 ) -> Result<(), String> {
     let cmd = Command::new("xelatex")
+        .arg("-interaction=nonstopmode")
+        .arg("-synctex=1")
         .arg(tex_file)
         .current_dir(compile_dir)
         .output();
@@ -306,7 +310,7 @@ async fn upload_pdf_to_texhub(pdf_path: &str, project_id: &str) -> Result<(), St
         "Uploading PDF to texhub at URL: {} (multipart manual)",
         upload_url
     );
-    match Client::new()
+    match http_client()
         .post(&upload_url)
         .header("Content-Type", content_type)
         .body(Body::from(body))
@@ -387,7 +391,9 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
     // clear the log file contents before compilation
     // check if exists, if not create
     let _ = fs::write(&log_file_path, "");
-    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("create runtime failed: {}", e)).unwrap();
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| format!("create runtime failed: {}", e))
+        .unwrap();
     task::spawn_blocking(move || {
         if let Err(e) = rt.block_on(compile_project(
             &params_copy,
