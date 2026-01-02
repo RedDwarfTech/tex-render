@@ -1,0 +1,9 @@
+# https://doc.rust-lang.org/cargo/reference/config.html
+[alias]
+b = "build"
+
+[build]
+rustflags = [
+    "-L", "./src/so"
+    ]
+incremental = true

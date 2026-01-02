@@ -12,6 +12,8 @@ mod render;
 mod rest;
 mod task;
 mod util;
+mod service;
+mod common;
 
 #[actix_web::main]
 async fn main() {
