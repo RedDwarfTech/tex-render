@@ -159,8 +159,8 @@ async fn run_xelatex_and_log(
         let pdf_path = copy_pdf_to_output_dir(params, &compile_dir.to_string());
         update_queue_compile_result_sync(params.clone(), Some(CompileResult::Success));
 
-        let project_id = params.project_id.clone();
-        do_upload_pdf_to_texhub(&pdf_path, &project_id, params, compile_dir);
+        do_upload_pdf_to_texhub(params, compile_dir);
+        do_upload_gz_to_texhub(params, compile_dir);
         let _ = open_write_end_marker(log_file_path, params);
         Ok(())
     } else {
@@ -265,14 +265,14 @@ fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams, con: 
  * Step 5: Upload the compiled PDF file to texhub server via HTTP.
  * Uses multipart form data or binary upload.
  */
-fn upload_pdf_to_texhub(pdf_path: &str, project_id: &str) -> Result<(), String> {
+fn upload_file_to_texhub(file_path: &str, project_id: &str) -> Result<(), String> {
     let texhub_api_url = get_app_config("cv.texhub_api_url");
     let upload_url = format!("{}/inner-tex/project/upload-output", texhub_api_url);
 
-    let file_data = fs::read(pdf_path).map_err(|e| format!("Failed to read PDF file: {}", e))?;
+    let file_data = fs::read(file_path).map_err(|e| format!("Failed to read PDF file: {}", e))?;
 
     // Manually build multipart/form-data body to avoid requiring reqwest multipart feature.
-    let file_name = Path::new(pdf_path)
+    let file_name = Path::new(file_path)
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "output.pdf".to_string());
@@ -460,12 +460,32 @@ fn open_write_end_marker(log_file_path: &str, params: &CompileAppParams) -> Resu
     return Ok(());
 }
 
-fn do_upload_pdf_to_texhub(
-    pdf_path: &str,
-    project_id: &str,
-    params: &CompileAppParams,
-    compile_dir: &str,
-) {
+fn do_upload_gz_to_texhub(params: &CompileAppParams, compile_dir: &str) {
+    let pdf_file_name = format!(
+        "{}.synctex.gz",
+        params
+            .file_path
+            .split('.')
+            .next()
+            .unwrap_or(&params.file_path)
+    );
+    let pdf_path = format!(
+        "{}/{}",
+        compile_dir,
+        Path::new(&pdf_file_name)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+    );
+    info!("Uploading sync gz from path: {}", pdf_path);
+    if Path::new(&pdf_path).exists() {
+        let _ = upload_file_to_texhub(&pdf_path, &params.project_id);
+    } else {
+        warn!("Compiled sync gz not found at: {}", pdf_path);
+    }
+}
+
+fn do_upload_pdf_to_texhub(params: &CompileAppParams, compile_dir: &str) {
     // upload pdf (best-effort)
     let pdf_file_name = format!(
         "{}.pdf",
@@ -485,7 +505,7 @@ fn do_upload_pdf_to_texhub(
     );
     info!("Uploading compiled PDF from path: {}", pdf_path);
     if Path::new(&pdf_path).exists() {
-        let _ = upload_pdf_to_texhub(&pdf_path, &params.project_id);
+        let _ = upload_file_to_texhub(&pdf_path, &params.project_id);
     } else {
         warn!("Compiled PDF not found at: {}", pdf_path);
     }
