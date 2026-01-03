@@ -6,14 +6,16 @@ use log::error;
 use task::app_init::initial_task;
 use task::compile_task_consumer::consume_redis_stream;
 
+use crate::controller::proj::proj_controller;
+
+mod common;
 mod controller;
 mod model;
 mod render;
 mod rest;
+mod service;
 mod task;
 mod util;
-mod service;
-mod common;
 
 #[actix_web::main]
 async fn main() {
@@ -30,8 +32,12 @@ async fn main() {
 }
 
 async fn actix_main() -> std::io::Result<()> {
-    HttpServer::new(|| App::new().configure(tex_controller::config))
-        .bind(("0.0.0.0", 8001))?
-        .run()
-        .await
+    HttpServer::new(|| {
+        App::new()
+            .configure(tex_controller::config)
+            .configure(proj_controller::config)
+    })
+    .bind(("0.0.0.0", 8001))?
+    .run()
+    .await
 }
