@@ -1,11 +1,7 @@
 use crate::model::cv::{
-     lang::cv_lang_resp::CvLangResp, project::cv_project_resp::CvProjectResp,
-    skill::cv_skill_resp::CvSkillResp, work::cv_work_resp::CvWorkResp,
+    project::cv_project_resp::CvProjectResp, skill::cv_skill_resp::CvSkillResp,
+    work::cv_work_resp::CvWorkResp,
 };
-use crate::model::project::compile_app_params::CompileAppParams;
-use log::error;
-use rust_wheel::common::util::rd_file_util::{create_folder_not_exists, get_filename_without_ext, join_paths};
-use std::fs;
 
 pub fn gen_work_items(content: String) -> String {
     if content.is_empty() {
@@ -112,34 +108,4 @@ pub fn get_project_str(works: &Option<Vec<CvProjectResp>>) -> String {
         }
         None => return "".to_owned(),
     }
-}
-
-/**
- * Copy the compiled pdf to output directory.
- * When the tex project was compiling, loading the compile folder's pdf file will fail,
- * so we copy the file to a separate output folder where the compiled pdf is stored.
- */
-pub fn copy_pdf_to_output_dir(params: &CompileAppParams, compile_dir: &str) -> String{
-    let pdf_output_folder = join_paths(&[compile_dir.to_owned(), "app-compile-output".to_owned()]);
-    create_folder_not_exists(&pdf_output_folder);
-
-    let fpath = params.file_path.clone();
-    let name_without_ext = get_filename_without_ext(&fpath);
-    let pdf_compile_path = join_paths(&[
-        compile_dir.to_owned(),
-        format!("{}{}", name_without_ext.to_owned(), ".pdf".to_owned()),
-    ]);
-    let pdf_output_path = join_paths(&[
-        pdf_output_folder,
-        format!("{}{}", name_without_ext.to_owned(), ".pdf".to_owned()),
-    ]);
-
-    let cp_result = fs::copy(&pdf_compile_path, &pdf_output_path);
-    if let Err(err) = cp_result {
-        error!(
-            "copy pdf to output folder failed, {}, output: {}",
-            err, pdf_output_path
-        );
-    }
-    return pdf_compile_path;
 }

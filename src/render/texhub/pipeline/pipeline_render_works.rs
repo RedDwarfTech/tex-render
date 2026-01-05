@@ -155,12 +155,8 @@ async fn run_xelatex_and_log(
     let status = output.status;
     if status.success() {
         info!("xelatex compilation succeeded");
-        // copy pdf to local output
-        let pdf_path = copy_pdf_to_output_dir(params, &compile_dir.to_string());
         update_queue_compile_result_sync(params.clone(), Some(CompileResult::Success));
-
         do_upload_pdf_to_texhub(params, compile_dir);
-        do_upload_gz_to_texhub(params, compile_dir);
         let _ = open_write_end_marker(log_file_path, params);
         Ok(())
     } else {
@@ -458,31 +454,6 @@ fn open_write_end_marker(log_file_path: &str, params: &CompileAppParams) -> Resu
     write_end_marker(&mut naked_file, params);
     drop(naked_file);
     return Ok(());
-}
-
-fn do_upload_gz_to_texhub(params: &CompileAppParams, compile_dir: &str) {
-    let pdf_file_name = format!(
-        "{}.synctex.gz",
-        params
-            .file_path
-            .split('.')
-            .next()
-            .unwrap_or(&params.file_path)
-    );
-    let pdf_path = format!(
-        "{}/{}",
-        compile_dir,
-        Path::new(&pdf_file_name)
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-    );
-    info!("Uploading sync gz from path: {}", pdf_path);
-    if Path::new(&pdf_path).exists() {
-        let _ = upload_file_to_texhub(&pdf_path, &params.project_id);
-    } else {
-        warn!("Compiled sync gz not found at: {}", pdf_path);
-    }
 }
 
 fn do_upload_pdf_to_texhub(params: &CompileAppParams, compile_dir: &str) {
