@@ -1,8 +1,5 @@
-use crate::controller::tex::tex_controller::{
-    update_queue_compile_result, update_queue_compile_result_sync,
-};
+use crate::controller::tex::tex_controller::update_queue_compile_result_sync;
 use crate::rest::client::cv_client::http_client_sync;
-use crate::util::cv_util::copy_pdf_to_output_dir;
 use crate::{
     model::project::compile_app_params::CompileAppParams, rest::client::cv_client::http_client,
 };

@@ -1,5 +1,4 @@
 use crate::model::project::compile_app_params::CompileAppParams;
-use crate::util::cv_util::copy_pdf_to_output_dir;
 use log::error;
 use rust_wheel::{
     common::util::rd_file_util::join_paths,
@@ -129,6 +128,5 @@ pub fn render_texhub_project_pipeline_nfs(params: &CompileAppParams) -> Option<C
     }
     let mut naked_file = file.unwrap();
     write_end_marker(&mut naked_file, params);
-    copy_pdf_to_output_dir(params, &compile_dir);
     return Some(CompileResult::Success);
 }

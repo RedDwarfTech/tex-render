@@ -9,8 +9,7 @@ use crate::{
         response::tex::compile_output::CompileOutput,
         template::cv_template::CvTemplate,
     },
-    rest::client::cv_client::update_gen_result,
-    util::cv_util::copy_pdf_to_output_dir,
+    rest::client::cv_client::update_gen_result
 };
 use chrono::{Datelike, Utc};
 use log::{error, info, warn};
@@ -143,7 +142,6 @@ pub fn render_texhub_project_mq(params: &CompileAppParams) -> Option<CompileResu
     if let Err(e) = sync_result {
         error!("sync log file failed: {}, parmas: {:?}", e, params);
     }
-    copy_pdf_to_out_dir(params, &current_dir);
     let output = cmd.unwrap();
     let status = output.status;
     match status.code() {
@@ -164,17 +162,6 @@ pub fn render_texhub_project_mq(params: &CompileAppParams) -> Option<CompileResu
         }
     }
     return Some(CompileResult::Success);
-}
-
-/**
- * why copy the compiled pdf to seperate directory?
- * when the tex project was compiling, loading the compile folder's pdf file will failed
- * that's will cause the pdf show issue in user's browser
- * so we load the pdf from the seperate path that make the user always loading the correct pdf
- * the last step copy the file to dist folder, dist folder always store the compiled pdf
- */
-fn copy_pdf_to_out_dir(params: &CompileAppParams, current_dir: &String) {
-    copy_pdf_to_output_dir(params, &current_dir);
 }
 
 
