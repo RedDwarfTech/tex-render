@@ -1,7 +1,11 @@
 ARG BASE_IMAGE=dolphinjiang/rust-musl-builder:latest
 FROM ${BASE_IMAGE} AS builder
 ADD --chown=rust:rust . ./
-RUN CARGO_HTTP_MULTIPLEXING=false cargo build --release
+
+RUN git clone --depth 1 --branch 91d69b73e2fc9c65953c04debe0f06fbd1e51299 https://github.com/jlaurens/synctex.git
+RUN cd synctex && gcc -c -fPIC *.c && gcc -shared *.o -o libsynctex_parser.so -lz
+RUN cp libsynctex_parser.so ../src/so/
+RUN RUSTFLAGS='-L ./src/so' CARGO_HTTP_MULTIPLEXING=false cargo build --release
 
 # https://github.com/kjarosh/latex-docker
 FROM kjarosh/latex:2023.1
