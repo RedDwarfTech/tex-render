@@ -14,6 +14,11 @@ fn main() {
         {
             println!("cargo:rustc-link-arg=-Wl,-rpath,{}", so_dir_str);
         }
+
+        #[cfg(target_os = "linux")]
+        {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", so_dir_str);
+        }
     }
 
     // In case some environments need an explicit link-lib directive
