@@ -31,7 +31,7 @@ jobs:
       uses: docker/build-push-action@v3
       with:
         context: .
-        file: Dockerfile
+        file: Dockerfile.bulleye
         push: true
         tags: ${{ secrets.ALI_DOCKER_HUB_REGISTRY }}/reddwarf-pro/cv-render:${{ github.sha }} 
 
