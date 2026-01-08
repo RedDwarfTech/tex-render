@@ -1,0 +1,31 @@
+ARG BASE_IMAGE=rust:1.72-bullseye
+FROM ${BASE_IMAGE} AS builder
+WORKDIR /app
+COPY . /app
+RUN rustup default stable
+RUN git clone --depth 1 --branch 2020 https://github.com/RedDwarfTech/synctex.git
+RUN cd synctex && gcc -c -fPIC *.c && gcc -shared *.o -o libsynctex_parser.so -lz
+RUN cp synctex/libsynctex_parser.so ./src/so/
+RUN RUSTFLAGS='-L ./src/so' cargo build --release
+
+FROM registry.cn-shanghai.aliyuncs.com/reddwarf-pro/latex:876f59bccea12951fecb085d8c89d0aa8b60c29e
+LABEL org.reddwarf.image.authors="jiangtingqiang@gmail.com"
+
+ENV LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8 \
+    TZ=Asia/Shanghai
+
+WORKDIR /app
+ENV ROCKET_ADDRESS=0.0.0.0
+COPY --from=builder /home/rust/src/settings-production.toml /app/settings.toml
+COPY --from=builder /home/rust/src/script /app/
+COPY --from=builder /home/rust/src/target/x86_64-unknown-linux-musl/release/cv-render /app/
+RUN mkdir -p /usr/share/fonts/ && mkdir -p /app/config/ && mkdir -p /root/.ssh
+COPY --from=builder /home/rust/src/log4rs.yaml /app/
+RUN tlmgr update --self && tlmgr install ctex moderncv fontawesome5 fontawesome nth\ 
+    academicons multirow arydshln titlesec enumitem makecell relsize\
+    tcolorbox environ tikzfill csquotes xifthen ifmtarg tex-gyre && \
+    apt-get update -y && \
+    apt-get install add rsync openssh sshpass fontconfig -y && \
+    chmod +x cv-render && texhash && fc-cache -f
+CMD ["./cv-render"]
