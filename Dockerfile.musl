@@ -1,14 +1,10 @@
-ARG BASE_IMAGE=rust:1.72-bullseye
+ARG BASE_IMAGE=dolphinjiang/rust-musl-builder:latest
 FROM ${BASE_IMAGE} AS builder
-WORKDIR /app
-COPY . /app
-RUN rustup default stable
-RUN git clone --depth 1 --branch 2020 https://github.com/RedDwarfTech/synctex.git
-RUN cd synctex && gcc -c -fPIC *.c && gcc -shared *.o -o libsynctex_parser.so -lz
-RUN cp synctex/libsynctex_parser.so ./src/so/
-RUN RUSTFLAGS='-L ./src/so' cargo build --release
+ADD --chown=rust:rust . ./
+RUN CARGO_HTTP_MULTIPLEXING=false cargo build --release
 
-FROM registry.cn-hongkong.aliyuncs.com/reddwarf-pro/latex:876f59bccea12951fecb085d8c89d0aa8b60c29e
+# https://github.com/kjarosh/latex-docker
+FROM kjarosh/latex:2023.1
 LABEL org.reddwarf.image.authors="jiangtingqiang@gmail.com"
 
 ENV LANG=en_US.UTF-8 \
@@ -25,7 +21,7 @@ COPY --from=builder /home/rust/src/log4rs.yaml /app/
 RUN tlmgr update --self && tlmgr install ctex moderncv fontawesome5 fontawesome nth\ 
     academicons multirow arydshln titlesec enumitem makecell relsize\
     tcolorbox environ tikzfill csquotes xifthen ifmtarg tex-gyre && \
-    apt-get update -y && \
-    apt-get install add rsync openssh sshpass fontconfig -y && \
+    apk update && \
+    apk add rsync openssh sshpass fontconfig && \
     chmod +x cv-render && texhash && fc-cache -f
 CMD ["./cv-render"]
