@@ -21,7 +21,7 @@ COPY --from=builder /app/src/settings-production.toml /app/settings.toml
 COPY --from=builder /app/src/script /app/
 COPY --from=builder /app/src/target/release/cv-render /app/
 RUN mkdir -p /usr/share/fonts/ && mkdir -p /app/config/ && mkdir -p /root/.ssh
-COPY --from=builder /app/src/log4rs.yaml /app/
+COPY --from=builder /app/log4rs.yaml /app/
 RUN tlmgr update --self && tlmgr install ctex moderncv fontawesome5 fontawesome nth\ 
     academicons multirow arydshln titlesec enumitem makecell relsize\
     tcolorbox environ tikzfill csquotes xifthen ifmtarg tex-gyre && \
