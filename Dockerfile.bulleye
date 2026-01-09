@@ -26,6 +26,6 @@ RUN tlmgr update --self && tlmgr install ctex moderncv fontawesome5 fontawesome 
     academicons multirow arydshln titlesec enumitem makecell relsize\
     tcolorbox environ tikzfill csquotes xifthen ifmtarg tex-gyre && \
     apt-get update -y && \
-    apt-get install add rsync openssh sshpass fontconfig -y && \
+    apt-get install rsync sshpass fontconfig -y && \
     chmod +x cv-render && texhash && fc-cache -f
 CMD ["./cv-render"]
