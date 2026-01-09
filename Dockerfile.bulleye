@@ -20,6 +20,7 @@ ENV ROCKET_ADDRESS=0.0.0.0
 COPY --from=builder /app/settings-production.toml /app/settings.toml
 COPY --from=builder /app/script /app/
 COPY --from=builder /app/target/release/cv-render /app/
+COPY --from=builder /app/src/so/libsynctex_parser.so /usr/lib/
 RUN mkdir -p /usr/share/fonts/ && mkdir -p /app/config/ && mkdir -p /root/.ssh
 COPY --from=builder /app/log4rs.yaml /app/
 RUN tlmgr update --self && tlmgr install ctex moderncv fontawesome5 fontawesome nth\ 
