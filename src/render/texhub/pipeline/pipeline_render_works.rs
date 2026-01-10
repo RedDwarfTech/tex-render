@@ -108,51 +108,86 @@ async fn download_tex_project_zip(project_id: &str, temp_dir: &str) -> Result<St
 fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
     info!("Starting unzip operation: zip_path={}, extract_dir={}", zip_path, extract_dir);
     
-    let output = Command::new("unzip")
-        .arg("-o")
+    // Use spawn() instead of output() to have more control and better logging
+    // Use -o flag to overwrite without prompting, and ensure stdout/stderr are captured
+    info!("Spawning unzip command...");
+    let mut child = match Command::new("unzip")
+        .arg("-o")  // Overwrite files without prompting
         .arg(zip_path)
         .arg("-d")
         .arg(extract_dir)
-        .output();
-
-    match output {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let exit_code = out.status.code().unwrap_or(-1);
-            
-            if out.status.success() {
-                info!("Unzip completed successfully. exit_code={}, extract_dir={}", exit_code, extract_dir);
-                if !stdout.is_empty() {
-                    info!("Unzip stdout:\n{}", stdout);
-                }
-                if !stderr.is_empty() {
-                    // unzip often writes to stderr even on success (e.g., "inflating: ...")
-                    info!("Unzip stderr (informational):\n{}", stderr);
-                }
-                Ok(())
-            } else {
-                error!("Unzip command failed. exit_code={}, zip_path={}, extract_dir={}", exit_code, zip_path, extract_dir);
-                if !stdout.is_empty() {
-                    error!("Unzip stdout:\n{}", stdout);
-                }
-                if !stderr.is_empty() {
-                    error!("Unzip stderr:\n{}", stderr);
-                }
-                let error_msg = if !stderr.is_empty() {
-                    format!("unzip command failed (exit code {}): {}", exit_code, stderr)
-                } else if !stdout.is_empty() {
-                    format!("unzip command failed (exit code {}): {}", exit_code, stdout)
-                } else {
-                    format!("unzip command failed with exit code: {}", exit_code)
-                };
-                Err(error_msg)
-            }
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => {
+            info!("Unzip process spawned successfully, PID: {:?}", child.id());
+            child
         }
         Err(e) => {
-            error!("Failed to run unzip command: zip_path={}, extract_dir={}, error={}", zip_path, extract_dir, e);
-            Err(format!("Failed to run unzip command: {}", e))
+            error!("Failed to spawn unzip command: zip_path={}, extract_dir={}, error={}", zip_path, extract_dir, e);
+            return Err(format!("Failed to spawn unzip command: {}", e));
         }
+    };
+
+    info!("Waiting for unzip process to complete...");
+    let status = match child.wait() {
+        Ok(status) => {
+            info!("Unzip process completed, status: {:?}", status);
+            status
+        }
+        Err(e) => {
+            error!("Failed to wait for unzip process: error={}", e);
+            return Err(format!("Failed to wait for unzip process: {}", e));
+        }
+    };
+
+    // Capture stdout and stderr
+    info!("Reading unzip process output...");
+    let mut stdout_handle = child.stdout.take();
+    let mut stderr_handle = child.stderr.take();
+    
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    
+    if let Some(mut stdout_pipe) = stdout_handle {
+        let _ = stdout_pipe.read_to_string(&mut stdout);
+    }
+    if let Some(mut stderr_pipe) = stderr_handle {
+        let _ = stderr_pipe.read_to_string(&mut stderr);
+    }
+
+    let exit_code = status.code().unwrap_or(-1);
+    
+    info!("Unzip command finished. exit_code={}, has_stdout={}, has_stderr={}, stdout_len={}, stderr_len={}", 
+          exit_code, !stdout.is_empty(), !stderr.is_empty(), stdout.len(), stderr.len());
+    
+    if status.success() {
+        info!("Unzip completed successfully. exit_code={}, extract_dir={}", exit_code, extract_dir);
+        if !stdout.is_empty() {
+            info!("Unzip stdout:\n{}", stdout);
+        }
+        if !stderr.is_empty() {
+            // unzip often writes warnings to stderr even on success (e.g., "stripped absolute path")
+            warn!("Unzip stderr (warnings/info):\n{}", stderr);
+        }
+        Ok(())
+    } else {
+        error!("Unzip command failed. exit_code={}, zip_path={}, extract_dir={}", exit_code, zip_path, extract_dir);
+        if !stdout.is_empty() {
+            error!("Unzip stdout:\n{}", stdout);
+        }
+        if !stderr.is_empty() {
+            error!("Unzip stderr:\n{}", stderr);
+        }
+        let error_msg = if !stderr.is_empty() {
+            format!("unzip command failed (exit code {}): {}", exit_code, stderr)
+        } else if !stdout.is_empty() {
+            format!("unzip command failed (exit code {}): {}", exit_code, stdout)
+        } else {
+            format!("unzip command failed with exit code: {}", exit_code)
+        };
+        Err(error_msg)
     }
 }
 
@@ -453,10 +488,21 @@ fn download_and_unzip(
     let zip_path = rt.block_on(download_tex_project_zip(&params.project_id, &temp_dir))?;
 
     // unzip into compile_dir
-    unzip_project(&zip_path, &unzip_dir).map_err(|e| format!("unzip failed: {}", e))?;
-    let _ = fs::remove_file(&zip_path);
-    let _ = fs::remove_dir_all(&temp_dir);
-    Ok(())
+    info!("About to unzip file: zip_path={}, unzip_dir={}", zip_path, unzip_dir);
+    match unzip_project(&zip_path, &unzip_dir) {
+        Ok(_) => {
+            info!("Unzip completed successfully, cleaning up temp files");
+            let _ = fs::remove_file(&zip_path);
+            let _ = fs::remove_dir_all(&temp_dir);
+            Ok(())
+        }
+        Err(e) => {
+            error!("Unzip failed: {}, cleaning up temp files", e);
+            let _ = fs::remove_file(&zip_path);
+            let _ = fs::remove_dir_all(&temp_dir);
+            Err(format!("unzip failed: {}", e))
+        }
+    }
 }
 
 async fn compile_project(
