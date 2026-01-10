@@ -24,7 +24,7 @@ use std::path::Path;
 
 pub fn get_pdf_pos(params: &GetPdfPosParams) -> Vec<PdfPosResp> {
     info!("get pdf pos params:{:?}", params);
-    let proj_dir = get_proj_base_dir(&params.project_id, params.create_time);
+    let proj_dir = get_proj_base_dir(&params.project_id, params.created_time);
     let pdf_file_name = format!("{}{}", get_filename_without_ext(&params.main_file), ".pdf");
     let full_pdf_file_path = join_paths(&[&proj_dir, &pdf_file_name.to_string()]);
     unsafe {

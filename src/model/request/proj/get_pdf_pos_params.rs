@@ -6,5 +6,5 @@ pub struct GetPdfPosParams {
     pub main_file: String,
     pub line: u32,
     pub column: u32,
-    pub create_time: i64,
+    pub created_time: i64,
 }
