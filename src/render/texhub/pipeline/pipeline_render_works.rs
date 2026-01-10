@@ -226,16 +226,6 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
             }
         };
 
-        // Log file being extracted
-        if i == 0 || (i + 1) % 10 == 0 || i == total_entries - 1 {
-            info!(
-                "Extracting entry {}/{}: {:?}",
-                i + 1,
-                total_entries,
-                outpath
-            );
-        }
-
         // Handle directories
         if file.name().ends_with('/') {
             fs::create_dir_all(&outpath).map_err(|e| {
