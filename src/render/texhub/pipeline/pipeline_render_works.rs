@@ -194,13 +194,35 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
                 extract_path.join(cleaned)
             }
             None => {
-                warn!(
-                    "Invalid/unsafe path in zip entry {}: raw_name = '{}', skipping",
-                    i,
-                    file.name()
-                );
-                skipped_count += 1;
-                continue;
+                // 绝对路径 fallback：去掉开头的 '/'，当作相对路径
+                let raw = file.name();
+                let cleaned = if raw.starts_with('/') {
+                    raw.trim_start_matches('/').to_string()
+                } else {
+                    raw.to_string()
+                };
+
+                // 仍然检查是否包含 .. （安全起见）
+                if cleaned.contains("..") {
+                    warn!(
+                        "Skipping entry {}: path contains '..' even after stripping: '{}'",
+                        i, cleaned
+                    );
+                    skipped_count += 1;
+                    continue;
+                }
+
+                // 可选：记录一下，便于调试
+                if i % 50 == 0 || i == total_entries - 1 {
+                    info!(
+                        "Fallback extracting entry {}/{}: '{}'",
+                        i + 1,
+                        total_entries,
+                        cleaned
+                    );
+                }
+
+                extract_path.join(&cleaned)
             }
         };
 
