@@ -6,6 +6,7 @@ use log::error;
 use task::app_init::initial_task;
 use task::compile_task_consumer::consume_redis_stream;
 
+use crate::controller::monitor::health_controller;
 use crate::controller::proj::proj_controller;
 
 mod common;
@@ -35,6 +36,7 @@ async fn actix_main() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
             .configure(tex_controller::config)
+            .configure(health_controller::config)
             .configure(proj_controller::config)
     })
     .bind(("0.0.0.0", 8001))?
