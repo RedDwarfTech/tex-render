@@ -7,25 +7,24 @@ use log::{error, info, warn};
 use notify::RecursiveMode;
 use notify::{Event, Watcher};
 use redis::{self, Connection};
-use reqwest::Body;
-use reqwest::Client;
 use rust_wheel::{
     common::util::rd_file_util::join_paths,
     config::app::app_conf_reader::get_app_config,
     texhub::{proj::compile_result::CompileResult, project::get_proj_path},
 };
 use serde_json::json;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::mpsc;
 use std::{
     env,
     fs::{self, File, OpenOptions},
-    io::{Error, Write},
+    io::Error,
     path::Path,
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::task;
+use zip::read::ZipArchive;
 
 // Recursively copy a directory's contents from `src` to `dst`.
 #[allow(dead_code)]
@@ -101,94 +100,135 @@ async fn download_tex_project_zip(project_id: &str, temp_dir: &str) -> Result<St
 }
 
 /**
- * Step 2: Unzip the tex project to a specified directory.
- * For now, use the `unzip` system command (requires `unzip` to be installed).
- * Alternatively, could use the `zip` crate if available.
+ * Step 2: Unzip the tex project to a specified directory using Rust zip library.
+ * Uses the `zip` crate to extract zip files without relying on system unzip command.
  */
 fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
-    info!("Starting unzip operation: zip_path={}, extract_dir={}", zip_path, extract_dir);
+    info!("Starting unzip operation using Rust zip library: zip_path={}, extract_dir={}", zip_path, extract_dir);
     
-    // Use spawn() instead of output() to have more control and better logging
-    // Use -o flag to overwrite without prompting, and ensure stdout/stderr are captured
-    info!("Spawning unzip command...");
-    let mut child = match Command::new("unzip")
-        .arg("-o")  // Overwrite files without prompting
-        .arg(zip_path)
-        .arg("-d")
-        .arg(extract_dir)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => {
-            info!("Unzip process spawned successfully, PID: {:?}", child.id());
-            child
+    // Open the zip file
+    let zip_file = match File::open(zip_path) {
+        Ok(file) => {
+            info!("Successfully opened zip file: {}", zip_path);
+            file
         }
         Err(e) => {
-            error!("Failed to spawn unzip command: zip_path={}, extract_dir={}, error={}", zip_path, extract_dir, e);
-            return Err(format!("Failed to spawn unzip command: {}", e));
+            error!("Failed to open zip file: zip_path={}, error={}", zip_path, e);
+            return Err(format!("Failed to open zip file: {}", e));
         }
     };
 
-    info!("Waiting for unzip process to complete...");
-    let status = match child.wait() {
-        Ok(status) => {
-            info!("Unzip process completed, status: {:?}", status);
-            status
+    // Create zip archive reader
+    let mut archive = match ZipArchive::new(zip_file) {
+        Ok(arch) => {
+            info!("Successfully created zip archive reader, entries: {}", arch.len());
+            arch
         }
         Err(e) => {
-            error!("Failed to wait for unzip process: error={}", e);
-            return Err(format!("Failed to wait for unzip process: {}", e));
+            error!("Failed to create zip archive reader: zip_path={}, error={}", zip_path, e);
+            return Err(format!("Failed to read zip archive: {}", e));
         }
     };
 
-    // Capture stdout and stderr
-    info!("Reading unzip process output...");
-    let mut stdout_handle = child.stdout.take();
-    let mut stderr_handle = child.stderr.take();
-    
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    
-    if let Some(mut stdout_pipe) = stdout_handle {
-        let _ = stdout_pipe.read_to_string(&mut stdout);
-    }
-    if let Some(mut stderr_pipe) = stderr_handle {
-        let _ = stderr_pipe.read_to_string(&mut stderr);
+    // Ensure extract directory exists
+    let extract_path = Path::new(extract_dir);
+    if !extract_path.exists() {
+        fs::create_dir_all(extract_path).map_err(|e| {
+            error!("Failed to create extract directory: extract_dir={}, error={}", extract_dir, e);
+            format!("Failed to create extract directory: {}", e)
+        })?;
+        info!("Created extract directory: {}", extract_dir);
     }
 
-    let exit_code = status.code().unwrap_or(-1);
-    
-    info!("Unzip command finished. exit_code={}, has_stdout={}, has_stderr={}, stdout_len={}, stderr_len={}", 
-          exit_code, !stdout.is_empty(), !stderr.is_empty(), stdout.len(), stderr.len());
-    
-    if status.success() {
-        info!("Unzip completed successfully. exit_code={}, extract_dir={}", exit_code, extract_dir);
-        if !stdout.is_empty() {
-            info!("Unzip stdout:\n{}", stdout);
-        }
-        if !stderr.is_empty() {
-            // unzip often writes warnings to stderr even on success (e.g., "stripped absolute path")
-            warn!("Unzip stderr (warnings/info):\n{}", stderr);
-        }
-        Ok(())
-    } else {
-        error!("Unzip command failed. exit_code={}, zip_path={}, extract_dir={}", exit_code, zip_path, extract_dir);
-        if !stdout.is_empty() {
-            error!("Unzip stdout:\n{}", stdout);
-        }
-        if !stderr.is_empty() {
-            error!("Unzip stderr:\n{}", stderr);
-        }
-        let error_msg = if !stderr.is_empty() {
-            format!("unzip command failed (exit code {}): {}", exit_code, stderr)
-        } else if !stdout.is_empty() {
-            format!("unzip command failed (exit code {}): {}", exit_code, stdout)
-        } else {
-            format!("unzip command failed with exit code: {}", exit_code)
+    // Extract all files from the archive
+    let total_entries = archive.len();
+    let mut extracted_count = 0;
+    let mut skipped_count = 0;
+    let mut warning_count = 0;
+
+    for i in 0..archive.len() {
+        let mut file = match archive.by_index(i) {
+            Ok(f) => f,
+            Err(e) => {
+                warn!("Failed to read entry {} from zip: error={}", i, e);
+                warning_count += 1;
+                continue;
+            }
         };
-        Err(error_msg)
+
+        // Sanitize the file path to prevent directory traversal attacks
+        let outpath = match file.enclosed_name() {
+            Some(path) => {
+                // Strip absolute paths and normalize the path
+                let path_str = path.to_string_lossy();
+                // Remove leading slashes and drive letters (Windows)
+                let cleaned = path_str
+                    .trim_start_matches('/')
+                    .trim_start_matches(|c: char| c.is_alphabetic() && c == ':')
+                    .trim_start_matches('/');
+                
+                if cleaned.contains("..") {
+                    warn!("Skipping potentially unsafe path in zip entry {}: {}", i, path_str);
+                    skipped_count += 1;
+                    continue;
+                }
+                
+                extract_path.join(cleaned)
+            }
+            None => {
+                warn!("Invalid path in zip entry {}, skipping", i);
+                skipped_count += 1;
+                continue;
+            }
+        };
+
+        // Log file being extracted
+        if i == 0 || (i + 1) % 10 == 0 || i == total_entries - 1 {
+            info!("Extracting entry {}/{}: {:?}", i + 1, total_entries, outpath);
+        }
+
+        // Handle directories
+        if file.name().ends_with('/') {
+            fs::create_dir_all(&outpath).map_err(|e| {
+                error!("Failed to create directory {:?}: error={}", outpath, e);
+                format!("Failed to create directory {:?}: {}", outpath, e)
+            })?;
+        } else {
+            // Ensure parent directory exists
+            if let Some(parent) = outpath.parent() {
+                if !parent.exists() {
+                    fs::create_dir_all(parent).map_err(|e| {
+                        error!("Failed to create parent directory {:?}: error={}", parent, e);
+                        format!("Failed to create parent directory: {}", e)
+                    })?;
+                }
+            }
+
+            // Extract file
+            let mut outfile = File::create(&outpath).map_err(|e| {
+                error!("Failed to create file {:?}: error={}", outpath, e);
+                format!("Failed to create file {:?}: {}", outpath, e)
+            })?;
+
+            std::io::copy(&mut file, &mut outfile).map_err(|e| {
+                error!("Failed to write file {:?}: error={}", outpath, e);
+                format!("Failed to write file {:?}: {}", outpath, e)
+            })?;
+            
+            extracted_count += 1;
+        }
     }
+
+    info!(
+        "Unzip completed successfully. zip_path={}, extract_dir={}, total_entries={}, extracted={}, skipped={}, warnings={}",
+        zip_path, extract_dir, total_entries, extracted_count, skipped_count, warning_count
+    );
+
+    if warning_count > 0 {
+        warn!("Completed with {} warnings (some entries may have been skipped)", warning_count);
+    }
+
+    Ok(())
 }
 
 /**
