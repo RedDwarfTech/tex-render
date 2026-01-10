@@ -105,8 +105,9 @@ async fn download_tex_project_zip(project_id: &str, temp_dir: &str) -> Result<St
  * For now, use the `unzip` system command (requires `unzip` to be installed).
  * Alternatively, could use the `zip` crate if available.
  */
-#[allow(dead_code)]
 fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
+    info!("Starting unzip operation: zip_path={}, extract_dir={}", zip_path, extract_dir);
+    
     let output = Command::new("unzip")
         .arg("-o")
         .arg(zip_path)
@@ -116,15 +117,42 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
 
     match output {
         Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let exit_code = out.status.code().unwrap_or(-1);
+            
             if out.status.success() {
-                info!("Unzipped project to: {}", extract_dir);
+                info!("Unzip completed successfully. exit_code={}, extract_dir={}", exit_code, extract_dir);
+                if !stdout.is_empty() {
+                    info!("Unzip stdout:\n{}", stdout);
+                }
+                if !stderr.is_empty() {
+                    // unzip often writes to stderr even on success (e.g., "inflating: ...")
+                    info!("Unzip stderr (informational):\n{}", stderr);
+                }
                 Ok(())
             } else {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                Err(format!("unzip command failed: {}", stderr))
+                error!("Unzip command failed. exit_code={}, zip_path={}, extract_dir={}", exit_code, zip_path, extract_dir);
+                if !stdout.is_empty() {
+                    error!("Unzip stdout:\n{}", stdout);
+                }
+                if !stderr.is_empty() {
+                    error!("Unzip stderr:\n{}", stderr);
+                }
+                let error_msg = if !stderr.is_empty() {
+                    format!("unzip command failed (exit code {}): {}", exit_code, stderr)
+                } else if !stdout.is_empty() {
+                    format!("unzip command failed (exit code {}): {}", exit_code, stdout)
+                } else {
+                    format!("unzip command failed with exit code: {}", exit_code)
+                };
+                Err(error_msg)
             }
         }
-        Err(e) => Err(format!("Failed to run unzip command: {}", e)),
+        Err(e) => {
+            error!("Failed to run unzip command: zip_path={}, extract_dir={}, error={}", zip_path, extract_dir, e);
+            Err(format!("Failed to run unzip command: {}", e))
+        }
     }
 }
 
