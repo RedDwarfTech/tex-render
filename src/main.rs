@@ -38,6 +38,7 @@ async fn actix_main() -> std::io::Result<()> {
             .configure(proj_controller::config)
     })
     .bind(("0.0.0.0", 8001))?
+    .workers(3)
     .run()
     .await
 }

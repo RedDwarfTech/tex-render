@@ -23,8 +23,8 @@ pub fn initial_task() {
         rt.block_on(async {
             consume_redis_stream().await;
         });
-    });
-    spawn(async move {
+        spawn(async move {
         check_expired_queue_task().await;
+    });
     });
 }
