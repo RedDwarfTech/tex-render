@@ -104,8 +104,11 @@ async fn download_tex_project_zip(project_id: &str, temp_dir: &str) -> Result<St
  * Uses the `zip` crate to extract zip files without relying on system unzip command.
  */
 fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
-    info!("Starting unzip operation using Rust zip library: zip_path={}, extract_dir={}", zip_path, extract_dir);
-    
+    info!(
+        "Starting unzip operation using Rust zip library: zip_path={}, extract_dir={}",
+        zip_path, extract_dir
+    );
+
     // Open the zip file
     let zip_file = match File::open(zip_path) {
         Ok(file) => {
@@ -113,7 +116,10 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
             file
         }
         Err(e) => {
-            error!("Failed to open zip file: zip_path={}, error={}", zip_path, e);
+            error!(
+                "Failed to open zip file: zip_path={}, error={}",
+                zip_path, e
+            );
             return Err(format!("Failed to open zip file: {}", e));
         }
     };
@@ -121,11 +127,17 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
     // Create zip archive reader
     let mut archive = match ZipArchive::new(zip_file) {
         Ok(arch) => {
-            info!("Successfully created zip archive reader, entries: {}", arch.len());
+            info!(
+                "Successfully created zip archive reader, entries: {}",
+                arch.len()
+            );
             arch
         }
         Err(e) => {
-            error!("Failed to create zip archive reader: zip_path={}, error={}", zip_path, e);
+            error!(
+                "Failed to create zip archive reader: zip_path={}, error={}",
+                zip_path, e
+            );
             return Err(format!("Failed to read zip archive: {}", e));
         }
     };
@@ -134,7 +146,10 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
     let extract_path = Path::new(extract_dir);
     if !extract_path.exists() {
         fs::create_dir_all(extract_path).map_err(|e| {
-            error!("Failed to create extract directory: extract_dir={}, error={}", extract_dir, e);
+            error!(
+                "Failed to create extract directory: extract_dir={}, error={}",
+                extract_dir, e
+            );
             format!("Failed to create extract directory: {}", e)
         })?;
         info!("Created extract directory: {}", extract_dir);
@@ -166,17 +181,24 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
                     .trim_start_matches('/')
                     .trim_start_matches(|c: char| c.is_alphabetic() && c == ':')
                     .trim_start_matches('/');
-                
+
                 if cleaned.contains("..") {
-                    warn!("Skipping potentially unsafe path in zip entry {}: {}", i, path_str);
+                    warn!(
+                        "Skipping potentially unsafe path in zip entry {}: {}",
+                        i, path_str
+                    );
                     skipped_count += 1;
                     continue;
                 }
-                
+
                 extract_path.join(cleaned)
             }
             None => {
-                error!("Invalid path in zip entry {}, skipping", i);
+                warn!(
+                    "Invalid/unsafe path in zip entry {}: raw_name = '{}', skipping",
+                    i,
+                    file.name()
+                );
                 skipped_count += 1;
                 continue;
             }
@@ -184,7 +206,12 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
 
         // Log file being extracted
         if i == 0 || (i + 1) % 10 == 0 || i == total_entries - 1 {
-            info!("Extracting entry {}/{}: {:?}", i + 1, total_entries, outpath);
+            info!(
+                "Extracting entry {}/{}: {:?}",
+                i + 1,
+                total_entries,
+                outpath
+            );
         }
 
         // Handle directories
@@ -193,12 +220,15 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
                 error!("Failed to create directory {:?}: error={}", outpath, e);
                 format!("Failed to create directory {:?}: {}", outpath, e)
             })?;
-            } else {
+        } else {
             // Ensure parent directory exists
             if let Some(parent) = outpath.parent() {
                 if !parent.exists() {
                     fs::create_dir_all(parent).map_err(|e| {
-                        error!("Failed to create parent directory {:?}: error={}", parent, e);
+                        error!(
+                            "Failed to create parent directory {:?}: error={}",
+                            parent, e
+                        );
                         format!("Failed to create parent directory: {}", e)
                     })?;
                 }
@@ -214,7 +244,7 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
                 error!("Failed to write file {:?}: error={}", outpath, e);
                 format!("Failed to write file {:?}: {}", outpath, e)
             })?;
-            
+
             extracted_count += 1;
         }
     }
@@ -225,7 +255,10 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
     );
 
     if warning_count > 0 {
-        warn!("Completed with {} warnings (some entries may have been skipped)", warning_count);
+        warn!(
+            "Completed with {} warnings (some entries may have been skipped)",
+            warning_count
+        );
     }
 
     Ok(())
@@ -240,9 +273,11 @@ async fn run_xelatex_and_log(
     log_file_path: &str,
     params: &CompileAppParams,
 ) -> Result<(), String> {
-    info!("Starting xelatex compilation: tex_file={}, compile_dir={}, log_file={}", 
-          tex_file, compile_dir, log_file_path);
-    
+    info!(
+        "Starting xelatex compilation: tex_file={}, compile_dir={}, log_file={}",
+        tex_file, compile_dir, log_file_path
+    );
+
     let cmd = Command::new("xelatex")
         .arg("-interaction=nonstopmode")
         .arg("-synctex=1")
@@ -251,11 +286,13 @@ async fn run_xelatex_and_log(
         .output();
 
     if let Err(e) = cmd {
-        error!("Failed to start xelatex process: tex_file={}, compile_dir={}, error={}, params: {:?}", 
-               tex_file, compile_dir, e, params);
+        error!(
+            "Failed to start xelatex process: tex_file={}, compile_dir={}, error={}, params: {:?}",
+            tex_file, compile_dir, e, params
+        );
         return Err(format!("Failed to start xelatex process: {}", e));
     }
-    
+
     let output = cmd.unwrap();
     let status = output.status;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -264,10 +301,12 @@ async fn run_xelatex_and_log(
         .code()
         .map(|c| c.to_string())
         .unwrap_or_else(|| "unknown (terminated by signal)".to_string());
-    
+
     if status.success() {
-        info!("xelatex compilation succeeded: tex_file={}, compile_dir={}, exit_code={}", 
-              tex_file, compile_dir, exit_code);
+        info!(
+            "xelatex compilation succeeded: tex_file={}, compile_dir={}, exit_code={}",
+            tex_file, compile_dir, exit_code
+        );
         if !stdout.is_empty() {
             let stdout_len = stdout.len();
             let preview = if stdout_len > 500 {
@@ -275,8 +314,12 @@ async fn run_xelatex_and_log(
             } else {
                 &stdout
             };
-            info!("xelatex stdout (last {} chars of {}):\n{}", 
-                  preview.len(), stdout_len, preview);
+            info!(
+                "xelatex stdout (last {} chars of {}):\n{}",
+                preview.len(),
+                stdout_len,
+                preview
+            );
         }
         update_queue_compile_result_sync(params.clone(), Some(CompileResult::Success));
         do_upload_pdf_to_texhub(params, compile_dir);
@@ -284,41 +327,59 @@ async fn run_xelatex_and_log(
         Ok(())
     } else {
         // Compilation failed - output detailed error information
-        error!("xelatex compilation failed: tex_file={}, compile_dir={}, exit_code={}", 
-               tex_file, compile_dir, exit_code);
-        error!("Compilation parameters: project_id={}, file_path={}, log_file={}", 
-               params.project_id, params.file_path, log_file_path);
-        
+        error!(
+            "xelatex compilation failed: tex_file={}, compile_dir={}, exit_code={}",
+            tex_file, compile_dir, exit_code
+        );
+        error!(
+            "Compilation parameters: project_id={}, file_path={}, log_file={}",
+            params.project_id, params.file_path, log_file_path
+        );
+
         // Log stdout content
         if !stdout.is_empty() {
-            error!("xelatex stdout (full output, {} bytes):\n{}", stdout.len(), stdout);
+            error!(
+                "xelatex stdout (full output, {} bytes):\n{}",
+                stdout.len(),
+                stdout
+            );
         } else {
             warn!("xelatex stdout is empty");
         }
-        
+
         // Log stderr content (usually contains error messages)
         if !stderr.is_empty() {
-            error!("xelatex stderr (full output, {} bytes):\n{}", stderr.len(), stderr);
+            error!(
+                "xelatex stderr (full output, {} bytes):\n{}",
+                stderr.len(),
+                stderr
+            );
         } else {
             warn!("xelatex stderr is empty");
         }
-        
+
         // Try to extract key error information from the output
         let error_summary = extract_compilation_errors(&stdout, &stderr);
         if !error_summary.is_empty() {
             error!("Key compilation errors detected:\n{}", error_summary);
         }
-        
+
         // Write error details to log file
-        if let Err(e) = write_compilation_errors_to_log(log_file_path, &stdout, &stderr, exit_code.as_str(), params) {
+        if let Err(e) = write_compilation_errors_to_log(
+            log_file_path,
+            &stdout,
+            &stderr,
+            exit_code.as_str(),
+            params,
+        ) {
             warn!("Failed to write compilation errors to log file: {}", e);
         }
-        
+
         let error_msg = format!(
             "xelatex compilation failed (exit code: {}). stdout_len={}, stderr_len={}. Check logs for details.",
             exit_code, stdout.len(), stderr.len()
         );
-        
+
         update_queue_compile_result_sync(params.clone(), Some(CompileResult::Failure));
         let _ = open_write_end_marker(log_file_path, params);
         Err(error_msg)
@@ -329,7 +390,7 @@ async fn run_xelatex_and_log(
 fn extract_compilation_errors(stdout: &str, stderr: &str) -> String {
     let mut errors = Vec::new();
     let combined = format!("{}\n{}", stdout, stderr);
-    
+
     // Look for common LaTeX error patterns
     let error_patterns = vec![
         ("Error:", "LaTeX errors"),
@@ -339,7 +400,7 @@ fn extract_compilation_errors(stdout: &str, stderr: &str) -> String {
         ("File not found", "File not found errors"),
         ("Emergency stop", "Emergency stops"),
     ];
-    
+
     for (pattern, label) in error_patterns {
         for line in combined.lines() {
             if line.contains(pattern) {
@@ -347,7 +408,7 @@ fn extract_compilation_errors(stdout: &str, stderr: &str) -> String {
             }
         }
     }
-    
+
     if errors.is_empty() {
         // If no specific patterns found, return last few lines that might contain errors
         let lines: Vec<&str> = combined.lines().collect();
@@ -375,25 +436,33 @@ fn write_compilation_errors_to_log(
         .create(true)
         .open(log_file_path)
         .map_err(|e| format!("Failed to open log file: {}", e))?;
-    
-    writeln!(file, "\n==== COMPILATION FAILED ====").map_err(|e| format!("Failed to write to log: {}", e))?;
-    writeln!(file, "Exit code: {}", exit_code).map_err(|e| format!("Failed to write to log: {}", e))?;
-    writeln!(file, "Project ID: {}", params.project_id).map_err(|e| format!("Failed to write to log: {}", e))?;
-    writeln!(file, "File path: {}", params.file_path).map_err(|e| format!("Failed to write to log: {}", e))?;
-    
+
+    writeln!(file, "\n==== COMPILATION FAILED ====")
+        .map_err(|e| format!("Failed to write to log: {}", e))?;
+    writeln!(file, "Exit code: {}", exit_code)
+        .map_err(|e| format!("Failed to write to log: {}", e))?;
+    writeln!(file, "Project ID: {}", params.project_id)
+        .map_err(|e| format!("Failed to write to log: {}", e))?;
+    writeln!(file, "File path: {}", params.file_path)
+        .map_err(|e| format!("Failed to write to log: {}", e))?;
+
     if !stdout.is_empty() {
         writeln!(file, "\n--- STDOUT ---").map_err(|e| format!("Failed to write to log: {}", e))?;
-        file.write_all(stdout.as_bytes()).map_err(|e| format!("Failed to write stdout to log: {}", e))?;
+        file.write_all(stdout.as_bytes())
+            .map_err(|e| format!("Failed to write stdout to log: {}", e))?;
     }
-    
+
     if !stderr.is_empty() {
         writeln!(file, "\n--- STDERR ---").map_err(|e| format!("Failed to write to log: {}", e))?;
-        file.write_all(stderr.as_bytes()).map_err(|e| format!("Failed to write stderr to log: {}", e))?;
+        file.write_all(stderr.as_bytes())
+            .map_err(|e| format!("Failed to write stderr to log: {}", e))?;
     }
-    
-    writeln!(file, "\n==== END COMPILATION ERROR ====").map_err(|e| format!("Failed to write to log: {}", e))?;
-    file.sync_all().map_err(|e| format!("Failed to sync log file: {}", e))?;
-    
+
+    writeln!(file, "\n==== END COMPILATION ERROR ====")
+        .map_err(|e| format!("Failed to write to log: {}", e))?;
+    file.sync_all()
+        .map_err(|e| format!("Failed to sync log file: {}", e))?;
+
     Ok(())
 }
 
@@ -653,13 +722,16 @@ fn download_and_unzip(
     let zip_path = rt.block_on(download_tex_project_zip(&params.project_id, &temp_dir))?;
 
     // unzip into compile_dir
-    info!("About to unzip file: zip_path={}, unzip_dir={}", zip_path, unzip_dir);
+    info!(
+        "About to unzip file: zip_path={}, unzip_dir={}",
+        zip_path, unzip_dir
+    );
     match unzip_project(&zip_path, &unzip_dir) {
         Ok(_) => {
             info!("Unzip completed successfully, cleaning up temp files");
-    let _ = fs::remove_file(&zip_path);
-    let _ = fs::remove_dir_all(&temp_dir);
-    Ok(())
+            let _ = fs::remove_file(&zip_path);
+            let _ = fs::remove_dir_all(&temp_dir);
+            Ok(())
         }
         Err(e) => {
             error!("Unzip failed: {}, cleaning up temp files", e);
