@@ -18,16 +18,18 @@ use crate::{
     },
     service::global::proj::proj_util::get_proj_base_dir,
 };
-use log::error;
+use log::{error, info};
 use rust_wheel::common::util::rd_file_util::{get_filename_without_ext, join_paths};
 use std::path::Path;
 
 pub fn get_pdf_pos(params: &GetPdfPosParams) -> Vec<PdfPosResp> {
+    info!("get pdf pos params:{:?}", params);
     let proj_dir = get_proj_base_dir(&params.project_id, params.create_time);
     let pdf_file_name = format!("{}{}", get_filename_without_ext(&params.main_file), ".pdf");
     let full_pdf_file_path = join_paths(&[&proj_dir, &pdf_file_name.to_string()]);
     unsafe {
         let c_pdf_full_file_path = CString::new(full_pdf_file_path.clone());
+        info!("full pdf path:{}", full_pdf_file_path.clone());
         if let Err(e) = c_pdf_full_file_path {
             error!("parse out path error,{},{}", e, full_pdf_file_path.clone());
             return Vec::new();
