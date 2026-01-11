@@ -851,7 +851,11 @@ fn tail_log(params: &CompileAppParams, log_file_path: &str) -> notify::Result<()
                 f.seek(SeekFrom::Start(pos)).unwrap();
                 pos = f.metadata().unwrap().len();
                 contents.clear();
-                f.read_to_string(&mut contents).unwrap();
+                let read_result = f.read_to_string(&mut contents);
+                if let Err(e) = read_result {
+                    error!("read log file failed: {}", e);
+                    continue;
+                }
                 write_log_to_redis_stream(&contents, params, &mut con);
                 if contents.contains("====END====") {
                     info!("Detected end marker in log, stopping tail.");

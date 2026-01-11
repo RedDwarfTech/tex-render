@@ -55,7 +55,6 @@ pub async fn consume_redis_stream() {
         for sk in stream_reply.clone().keys {
             match sk.key.as_str() {
                 "texhub-server:proj:s-comp-queue" => {
-                    warn!("Handling compile stream: {:?}", sk);
                     handle_proj_compile_stream(sk, &rl, &lock).await;
                 }
                 _ => {
