@@ -1,5 +1,5 @@
 use crate::{model::user::tex_user_config::TexUserConfig, rest::client::cv_client::http_client};
-use log::{error, info};
+use log::error;
 use rust_wheel::{
     config::app::app_conf_reader::get_app_config, model::response::api_response::ApiResponse,
 };
@@ -27,9 +27,6 @@ pub async fn get_one_user_config(uid: i64, key: &str) -> Option<TexUserConfig> {
             return None;
         }
     };
-
-    info!("texhub response body: {}", body_text);
-
     match serde_json::from_str::<ApiResponse<TexUserConfig>>(&body_text) {
         Ok(api_resp) => Some(api_resp.result),
         Err(e) => {

@@ -211,29 +211,16 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
                     skipped_count += 1;
                     continue;
                 }
-
-                // 可选：记录一下，便于调试
-                if i % 50 == 0 || i == total_entries - 1 {
-                    info!(
-                        "Fallback extracting entry {}/{}: '{}'",
-                        i + 1,
-                        total_entries,
-                        cleaned
-                    );
-                }
-
                 extract_path.join(&cleaned)
             }
         };
 
-        // Handle directories
         if file.name().ends_with('/') {
             fs::create_dir_all(&outpath).map_err(|e| {
                 error!("Failed to create directory {:?}: error={}", outpath, e);
                 format!("Failed to create directory {:?}: {}", outpath, e)
             })?;
         } else {
-            // Ensure parent directory exists
             if let Some(parent) = outpath.parent() {
                 if !parent.exists() {
                     fs::create_dir_all(parent).map_err(|e| {
