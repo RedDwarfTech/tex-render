@@ -1,5 +1,6 @@
-use crate::model::project::tex_file_compile_status::TeXFileCompileStatus;
 use crate::model::project::compile_app_params::CompileAppParams;
+use crate::model::project::tex_file_compile_status::TeXFileCompileStatus;
+use crate::model::user::tex_user_config::TexUserConfig;
 use crate::render::render_worker::{
     render_texhub_project, render_texhub_project_mq, render_texhub_project_sse,
 };
@@ -15,7 +16,6 @@ use rust_wheel::model::response::api_response::ApiResponse;
 use rust_wheel::texhub::proj::compile_result::CompileResult;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::{sync::mpsc::UnboundedReceiver, task};
-use crate::model::user::tex_user_config::TexUserConfig;
 
 pub async fn compile_tex(params: web::Json<CompileAppParams>) -> impl Responder {
     let resp = render_texhub_project(&params).await;
@@ -43,30 +43,11 @@ pub async fn compile_tex_sse(params: web::Query<CompileAppParams>) -> HttpRespon
 }
 
 pub async fn compile_tex_from_mq(params: CompileAppParams) {
-    let compile_mode: Option<TexUserConfig> = get_one_user_config(103, "COMPILE_MODE").await;
-    if compile_mode.as_ref().is_some() && compile_mode.as_ref().unwrap().config_value == "pipeline-nfs" {
-        warn!("Using pipeline nfs compile mode for params: {:?}", params);
-        task::spawn_blocking(move || {
-            let compile_result = render_texhub_project_pipeline_nfs(&params);
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(update_queue_compile_result(params, compile_result));
-        });
-    }
-    else if compile_mode.is_some() && compile_mode.unwrap().config_value == "pipeline" {
-        warn!("Using pipeline compile mode for params: {:?}", params);
-        task::spawn_blocking(move || {
-            let compile_result = render_texhub_project_pipeline(&params);
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(update_queue_compile_result(params, compile_result));
-        });
-    } else {
-        warn!("Using legacy compile mode for params: {:?}", params);
-        task::spawn_blocking(move || {
-            let compile_result = render_texhub_project_mq(&params);
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(update_queue_compile_result(params, compile_result));
-        });
-    }
+    task::spawn_blocking(move || {
+        let compile_result = render_texhub_project_pipeline(&params);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(update_queue_compile_result(params, compile_result));
+    });
 }
 
 pub async fn update_queue_compile_result(
