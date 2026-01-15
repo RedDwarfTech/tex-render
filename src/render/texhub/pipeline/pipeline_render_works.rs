@@ -313,12 +313,6 @@ async fn run_xelatex_and_log(
             } else {
                 &stdout
             };
-            info!(
-                "xelatex stdout (last {} chars of {}):\n{}",
-                preview.len(),
-                stdout_len,
-                preview
-            );
         }
         update_queue_compile_result_sync(params.clone(), Some(CompileResult::Success));
         do_upload_pdf_to_texhub(params, compile_dir);
@@ -335,17 +329,6 @@ async fn run_xelatex_and_log(
             params.project_id, params.file_path, log_file_path
         );
 
-        // Log stdout content
-        if !stdout.is_empty() {
-            error!(
-                "xelatex stdout (full output, {} bytes):\n{}",
-                stdout.len(),
-                stdout
-            );
-        } else {
-            warn!("xelatex stdout is empty");
-        }
-
         // Log stderr content (usually contains error messages)
         if !stderr.is_empty() {
             error!(
@@ -353,8 +336,6 @@ async fn run_xelatex_and_log(
                 stderr.len(),
                 stderr
             );
-        } else {
-            warn!("xelatex stderr is empty");
         }
 
         // Try to extract key error information from the output
@@ -608,7 +589,6 @@ fn upload_file_to_texhub(file_path: &str, project_id: &str) -> Result<(), String
     {
         Ok(resp) => {
             if resp.status().is_success() {
-                info!("Successfully uploaded PDF to texhub: {}", upload_url);
                 Ok(())
             } else {
                 let status = resp.status();
