@@ -1,13 +1,14 @@
 use std::{env, io};
 
+use crate::render::texhub::pipeline::pipeline_render_works::del_redis_stream;
 use crate::{
-    controller::tex::tex_controller::compile_tex_from_mq, model::project::compile_app_params::CompileAppParams, rest::client::cv_client::update_queue_status
+    controller::tex::tex_controller::compile_tex_from_mq,
+    model::project::compile_app_params::CompileAppParams,
+    rest::client::cv_client::update_queue_status,
 };
 use log::{error, warn};
+use redis::streams::{StreamId, StreamKey, StreamReadOptions, StreamReadReply};
 use redis::Commands;
-use redis::{
-    streams::{StreamId, StreamKey, StreamReadOptions, StreamReadReply}
-};
 use redlock::{Lock, RedLock};
 use rust_wheel::config::{
     app::app_conf_reader::get_app_config,
@@ -42,11 +43,7 @@ pub async fn consume_redis_stream() {
             }
         }
         let options = StreamReadOptions::default().count(1).block(1000).noack();
-        let result = con.xread_options(
-            &[stream_key.as_str()], 
-            &[stream_id], 
-            &options
-        );
+        let result = con.xread_options(&[stream_key.as_str()], &[stream_id], &options);
         if let Err(e) = result.as_ref() {
             error!("read stream failed: {}", e);
             break;
@@ -95,7 +92,11 @@ async fn handle_proj_compile_record(
     lock: &Lock<'_>,
     sk: &StreamKey,
 ) {
-    let param = do_task(&stream_id);
+    let param: CompileAppParams = do_task(&stream_id);
+    let redis_url = env::var("REDIS_URL").unwrap();
+    let client = redis::Client::open(redis_url.as_str()).unwrap();
+    let mut con = client.get_connection().unwrap();
+    del_redis_stream(&param, &mut con);
     let u_result = update_queue_status(1, &param.qid, Some(-1)).await;
     if !u_result {
         // do not return when update failed
@@ -146,8 +147,7 @@ fn do_task(stream_id: &StreamId) -> CompileAppParams {
 }
 
 fn extract_string_value(value: &redis::Value) -> Option<String> {
-    if let redis::Value::
-    BulkString(data) = value {
+    if let redis::Value::BulkString(data) = value {
         let bytes: Vec<u8> = data.clone().to_vec();
         String::from_utf8(bytes).ok()
     } else {

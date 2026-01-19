@@ -487,7 +487,7 @@ fn create_consumer_group(params: &CompileAppParams, con: &mut Connection) {
     }
 }
 
-fn del_redis_stream(params: &CompileAppParams, con: &mut Connection) {
+pub fn del_redis_stream(params: &CompileAppParams, con: &mut Connection) {
     let stream_key = format!("texhub:compile:log:{}", params.project_id);
     // Clear the stream before writing new logs
     let clear_res: redis::RedisResult<()> = redis::cmd("DEL").arg(&stream_key).query(con);
