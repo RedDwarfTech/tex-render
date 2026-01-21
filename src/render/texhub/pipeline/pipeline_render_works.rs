@@ -448,7 +448,7 @@ fn write_compilation_errors_to_log(
 
 fn create_consumer_group(params: &CompileAppParams, con: &mut Connection) {
     // stream key namespaced by project id
-    let stream_key = format!("texhub:compile:log:{}", params.project_id);
+    let stream_key = format!("texhub:compile:log:{}:{}", params.project_id, params.qid);
     let consumer_group = &params.project_id; // Use project_id as consumer group name
 
     // Create consumer group if it doesn't exist
@@ -488,7 +488,7 @@ fn create_consumer_group(params: &CompileAppParams, con: &mut Connection) {
 }
 
 pub fn del_redis_stream(params: &CompileAppParams, con: &mut Connection) {
-    let stream_key = format!("texhub:compile:log:{}", params.project_id);
+    let stream_key = format!("texhub:compile:log:{}:{}", params.project_id, params.qid);
     // Clear the stream before writing new logs
     let clear_res: redis::RedisResult<()> = redis::cmd("DEL").arg(&stream_key).query(con);
 
@@ -508,7 +508,7 @@ pub fn del_redis_stream(params: &CompileAppParams, con: &mut Connection) {
  * If redis integration is needed, uncomment and implement.
  */
 fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams, con: &mut Connection) {
-    let stream_key = format!("texhub:compile:log:{}", params.project_id);
+    let stream_key = format!("texhub:compile:log:{}:{}", params.project_id, params.qid);
     // Split content into lines and push each as an entry into the stream.
     // Each entry contains fields: msg, file, project_id, proj_created_time
     for line in log_content.lines() {
