@@ -1,8 +1,10 @@
 use crate::rest::client::texhub_queue_client::update_expired_job;
 use std::time::Duration;
+use log::info;
 use tokio::time;
 
 pub async fn get_expired_queue_task() {
+    info!("trigger check expired compile queue task");
     let cv = update_expired_job();
     cv.await;
     // make other task could be invoke
