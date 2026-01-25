@@ -1,4 +1,4 @@
-use log::error;
+use log::{error, info};
 use rust_wheel::{
     common::util::response_handler::success, config::app::app_conf_reader::get_app_config,
     model::response::api_response::ApiResponse,
@@ -18,7 +18,9 @@ pub async fn update_expired_job() {
         .send()
         .await
     {
-        Ok(r) => r,
+        Ok(r) => {
+            r
+        },
         Err(e) => {
             error!("Error sending request to texhub: {}, url: {}", e, url);
             return;
@@ -41,7 +43,7 @@ pub async fn update_expired_job() {
     match resp_result {
         Ok(resp) => {
             if success::<String>(&resp) {
-                // ok
+                info!("Successfully updated expired jobs in texhub queue.{:?}",resp);
             } else {
                 error!(
                     "texhub responded with failure: url: {}, status: {}, headers: {:?}, body: {}",
