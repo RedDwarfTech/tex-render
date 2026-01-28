@@ -18,13 +18,11 @@ pub fn initial_task() {
         return;
     }
 
-    tokio::task::spawn_blocking(|| {
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
-            consume_redis_stream().await;
-        });
-        spawn(async move {
-        check_expired_queue_task().await;
+    spawn(async {
+        consume_redis_stream().await;
     });
+    
+    spawn(async {
+        check_expired_queue_task().await;
     });
 }
