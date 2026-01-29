@@ -20,7 +20,10 @@ mod util;
 
 #[actix_web::main]
 async fn main() {
-    initial_task();
+    if let Err(e) = initial_task().await {
+        error!("initial task failed, {}", e);
+        return;
+    }
     let result = actix_main().await;
     match result {
         Ok(_) => {

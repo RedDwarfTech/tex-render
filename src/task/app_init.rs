@@ -4,6 +4,7 @@ use super::{
 };
 use log::{error, info};
 use tokio::spawn;
+use tokio_cron_scheduler::{Job, JobScheduler};
 
 pub fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all("log")?;
@@ -12,17 +13,27 @@ pub fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn initial_task() {
+pub async fn initial_task() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = init_logging() {
         error!("Failed to initialize logging: {}", e);
-        return;
+        return Ok(());
     }
+
+    let mut sched = JobScheduler::new().await?;
+
+    // Add async job
+    sched
+        .add(Job::new_async("1/7 * * * * *", |uuid, mut l| {
+            Box::pin(async move {
+                println!("I run async every 7 seconds");
+                check_expired_queue_task().await;
+            })
+        })?)
+        .await?;
 
     spawn(async {
         consume_redis_stream().await;
     });
-    
-    spawn(async {
-        check_expired_queue_task().await;
-    });
+
+    Ok(())
 }
