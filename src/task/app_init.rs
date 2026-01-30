@@ -25,7 +25,7 @@ pub async fn initial_task() -> Result<(), Box<dyn std::error::Error>> {
     sched
         .add(Job::new_async("1/7 * * * * *", |uuid, mut l| {
             Box::pin(async move {
-                println!("I run async every 7 seconds");
+                info!("I run async every 7 seconds");
                 check_expired_queue_task().await;
             })
         })?)
