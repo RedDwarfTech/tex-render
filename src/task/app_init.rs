@@ -31,6 +31,9 @@ pub async fn initial_task() -> Result<(), Box<dyn std::error::Error>> {
         })?)
         .await?;
 
+          // Start the scheduler
+    sched.start().await?;
+    
     spawn(async {
         consume_redis_stream().await;
     });
