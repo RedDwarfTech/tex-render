@@ -33,10 +33,16 @@ pub async fn initial_task() -> Result<(), Box<dyn std::error::Error>> {
 
           // Start the scheduler
     sched.start().await?;
-    
+
     spawn(async {
         consume_redis_stream().await;
     });
 
+    // 保持主任务运行，防止程序退出
+    tokio::signal::ctrl_c().await?;
+    
+    // 清理
+    sched.shutdown().await?;
+    
     Ok(())
 }
