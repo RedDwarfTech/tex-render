@@ -23,7 +23,7 @@ pub async fn initial_task() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add async job
     sched
-        .add(Job::new_async("1/7 * * * * *", |uuid, mut l| {
+        .add(Job::new_async("1/7 * * * * *", |_uuid, _l| {
             Box::pin(async move {
                 info!("I run async every 7 seconds");
                 check_expired_queue_task().await;
@@ -31,18 +31,27 @@ pub async fn initial_task() -> Result<(), Box<dyn std::error::Error>> {
         })?)
         .await?;
 
-          // Start the scheduler
+    // Start the scheduler
     sched.start().await?;
+    info!("Job scheduler started successfully");
 
+    // 启动 Redis stream 消费者
     spawn(async {
         consume_redis_stream().await;
     });
 
-    // 保持主任务运行，防止程序退出
-    tokio::signal::ctrl_c().await?;
-    
-    // 清理
-    sched.shutdown().await?;
+    // 在后台运行调度器，保持其生命周期
+    // 注意：sched 需要保持存活，所以我们在一个单独的任务中等待 ctrl_c
+    spawn(async move {
+        // 保持主任务运行，防止程序退出
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            error!("Failed to wait for ctrl_c: {}", e);
+        }
+        // 清理
+        if let Err(e) = sched.shutdown().await {
+            error!("Failed to shutdown scheduler: {}", e);
+        }
+    });
     
     Ok(())
 }
