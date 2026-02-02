@@ -4,6 +4,7 @@ use super::{
 };
 use log::{error, info};
 use tokio::spawn;
+use tokio::task::spawn_blocking;
 use tokio_cron_scheduler::{Job, JobScheduler};
 
 pub fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,13 +20,32 @@ pub async fn initial_task() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // 在独立线程中运行定时任务
+    std::thread::spawn(|| {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            if let Err(e) = initial_task_in_thread().await {
+                error!("Failed to initialize scheduled tasks: {}", e);
+            }
+        });
+    });
+
+    // 启动 Redis stream 消费者
+    spawn(async {
+        consume_redis_stream().await;
+    });
+
+    Ok(())
+}
+
+pub async fn initial_task_in_thread() -> Result<(), Box<dyn std::error::Error>> {
     let mut sched = JobScheduler::new().await?;
 
     // Add async job
     sched
         .add(Job::new_async("1/7 * * * * *", |_uuid, _l| {
             Box::pin(async move {
-                info!("I run async every 7 seconds");
+                info!("Running scheduled task: checking expired queue tasks");
                 check_expired_queue_task().await;
             })
         })?)
@@ -35,14 +55,8 @@ pub async fn initial_task() -> Result<(), Box<dyn std::error::Error>> {
     sched.start().await?;
     info!("Job scheduler started successfully");
 
-    // 启动 Redis stream 消费者
-    spawn(async {
-        consume_redis_stream().await;
-    });
-
     // 在后台运行调度器，保持其生命周期
-    // 注意：sched 需要保持存活，所以我们在一个单独的任务中等待 ctrl_c
-    spawn(async move {
+    tokio::spawn(async move {
         // 保持主任务运行，防止程序退出
         if let Err(e) = tokio::signal::ctrl_c().await {
             error!("Failed to wait for ctrl_c: {}", e);
@@ -52,6 +66,9 @@ pub async fn initial_task() -> Result<(), Box<dyn std::error::Error>> {
             error!("Failed to shutdown scheduler: {}", e);
         }
     });
-    
-    Ok(())
+
+    // 无限循环保持线程活跃
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
 }
