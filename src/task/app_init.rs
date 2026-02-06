@@ -43,7 +43,7 @@ pub async fn initial_task_in_thread() -> Result<(), Box<dyn std::error::Error>> 
 
     // Add async job
     sched
-        .add(Job::new_async("1/7 * * * * *", |_uuid, _l| {
+        .add(Job::new_async("1/45 * * * * *", |_uuid, _l| {
             Box::pin(async move {
                 info!("Running scheduled task: checking expired queue tasks");
                 check_expired_queue_task().await;
