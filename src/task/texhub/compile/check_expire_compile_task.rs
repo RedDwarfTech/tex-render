@@ -16,10 +16,6 @@ pub async fn get_expired_queue_task() {
  * the compile that takes too long time exceed the limit and change the status to exceed
  */
 pub async fn check_expired_queue_task() {
-    let mut interval = time::interval(Duration::from_millis(15000));
-    loop {
-        interval.tick().await;
         let check_result = get_expired_queue_task();
         check_result.await;
-    }
 }
