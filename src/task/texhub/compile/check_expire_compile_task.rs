@@ -4,7 +4,6 @@ use log::{info, warn};
 use tokio::time;
 
 pub async fn get_expired_queue_task() {
-    warn!("trigger check expired compile queue task");
     let cv = update_expired_job();
     cv.await;
     // make other task could be invoke
