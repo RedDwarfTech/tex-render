@@ -43,7 +43,7 @@ pub async fn update_expired_job() {
     match resp_result {
         Ok(resp) => {
             if success::<String>(&resp) {
-                info!("Successfully updated expired jobs in texhub queue.{:?}",resp);
+                
             } else {
                 error!(
                     "texhub responded with failure: url: {}, status: {}, headers: {:?}, body: {}",
