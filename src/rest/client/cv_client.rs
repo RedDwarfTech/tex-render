@@ -29,7 +29,7 @@ pub fn http_client() -> &'static reqwest::Client {
             .timeout(std::time::Duration::from_secs(15))
             .connect_timeout(std::time::Duration::from_secs(10))
             .pool_idle_timeout(std::time::Duration::from_secs(30))
-            .pool_max_idle_per_host(20)
+            .pool_max_idle_per_host(1)
             .build()
             .expect("Failed to build reqwest client")
     })
