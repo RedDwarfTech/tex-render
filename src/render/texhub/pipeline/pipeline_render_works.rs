@@ -20,7 +20,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::Error,
     path::Path,
-    process::Command,
+    process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::task;
@@ -277,25 +277,60 @@ async fn run_xelatex_and_log(
         tex_file, compile_dir, log_file_path
     );
 
-    let cmd = Command::new("xelatex")
+    // Open the log file and redirect both stdout and stderr into it so
+    // the tailing watcher can observe output in real time.
+    let log_file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(log_file_path)
+        .map_err(|e| {
+            error!(
+                "Failed to open log file for xelatex: {}, tex_file={}, compile_dir={}, params: {:?}",
+                e, tex_file, compile_dir, params
+            );
+            format!("Failed to open log file: {}", e)
+        })?;
+
+    // write a small header so watchers know compilation started
+    if let Err(e) = writeln!(&log_file, "==== XELATEX START ====") {
+        warn!("Failed to write start marker to log: {}", e);
+    }
+
+    let log_clone = match log_file.try_clone() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to clone log file handle: {}", e);
+            return Err(format!("Failed to clone log file handle: {}", e));
+        }
+    };
+
+    let mut child = match Command::new("xelatex")
         .arg("-interaction=nonstopmode")
         .arg("-synctex=1")
         .arg(tex_file)
         .current_dir(compile_dir)
-        .output();
+        .stdout(Stdio::from(log_clone))
+        .stderr(Stdio::from(log_file))
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            error!(
+                "Failed to start xelatex process: tex_file={}, compile_dir={}, error={}, params: {:?}",
+                tex_file, compile_dir, e, params
+            );
+            return Err(format!("Failed to start xelatex process: {}", e));
+        }
+    };
 
-    if let Err(e) = cmd {
-        error!(
-            "Failed to start xelatex process: tex_file={}, compile_dir={}, error={}, params: {:?}",
-            tex_file, compile_dir, e, params
-        );
-        return Err(format!("Failed to start xelatex process: {}", e));
-    }
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Failed to wait on xelatex process: {}", e);
+            return Err(format!("Failed to wait on xelatex process: {}", e));
+        }
+    };
 
-    let output = cmd.unwrap();
-    let status = output.status;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
     let exit_code = status
         .code()
         .map(|c| c.to_string())
@@ -306,14 +341,7 @@ async fn run_xelatex_and_log(
             "xelatex compilation succeeded: tex_file={}, compile_dir={}, exit_code={}",
             tex_file, compile_dir, exit_code
         );
-        if !stdout.is_empty() {
-            let stdout_len = stdout.len();
-            let preview = if stdout_len > 500 {
-                &stdout[stdout_len.saturating_sub(500)..]
-            } else {
-                &stdout
-            };
-        }
+        // Upload and update status
         update_queue_compile_result_sync(params.clone(), Some(CompileResult::Success));
         do_upload_pdf_to_texhub(params, compile_dir);
         let _ = open_write_end_marker(log_file_path, params);
@@ -329,35 +357,34 @@ async fn run_xelatex_and_log(
             params.project_id, params.file_path, log_file_path
         );
 
-        // Log stderr content (usually contains error messages)
-        if !stderr.is_empty() {
-            error!(
-                "xelatex stderr (full output, {} bytes):\n{}",
-                stderr.len(),
-                stderr
-            );
+        // Read the combined log file (stdout+stderr redirected there)
+        let combined = match fs::read_to_string(log_file_path) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Failed to read combined log file: {}", e);
+                String::new()
+            }
+        };
+
+        if !combined.is_empty() {
+            error!("xelatex combined output (tail):\n{}", &combined.chars().rev().take(1200).collect::<String>().chars().rev().collect::<String>() );
         }
 
-        // Try to extract key error information from the output
-        let error_summary = extract_compilation_errors(&stdout, &stderr);
+        // Try to extract key error information from the combined output
+        let error_summary = extract_compilation_errors(&combined, "");
         if !error_summary.is_empty() {
             error!("Key compilation errors detected:\n{}，log file: {}", error_summary, log_file_path);
         }
 
-        // Write error details to log file
-        if let Err(e) = write_compilation_errors_to_log(
-            log_file_path,
-            &stdout,
-            &stderr,
-            exit_code.as_str(),
-            params,
-        ) {
+        // Write error details to log file (append combined content under STDOUT)
+        if let Err(e) = write_compilation_errors_to_log(log_file_path, &combined, "", exit_code.as_str(), params) {
             warn!("Failed to write compilation errors to log file: {}", e);
         }
 
         let error_msg = format!(
-            "xelatex compilation failed (exit code: {}). stdout_len={}, stderr_len={}. Check logs for details.",
-            exit_code, stdout.len(), stderr.len()
+            "xelatex compilation failed (exit code: {}). combined_log_len={}. Check logs for details.",
+            exit_code,
+            combined.len()
         );
 
         update_queue_compile_result_sync(params.clone(), Some(CompileResult::Failure));
