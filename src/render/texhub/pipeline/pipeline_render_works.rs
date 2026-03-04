@@ -341,7 +341,7 @@ async fn run_xelatex_and_log(
         // Try to extract key error information from the output
         let error_summary = extract_compilation_errors(&stdout, &stderr);
         if !error_summary.is_empty() {
-            error!("Key compilation errors detected:\n{}", error_summary);
+            error!("Key compilation errors detected:\n{}，log file: {}", error_summary, log_file_path);
         }
 
         // Write error details to log file

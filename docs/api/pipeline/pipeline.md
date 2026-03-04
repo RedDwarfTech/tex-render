@@ -1,7 +1,7 @@
 测试环境：
 
 ```bash
-curl -v -X POST \
+curl -v -X PUT \
   http://tex-service.reddwarf-pro.svc.cluster.local:8000/inner-tex/project/download \
   -H "app-id:1" \
   -H "user-id:1" \
