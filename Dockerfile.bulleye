@@ -23,7 +23,7 @@ COPY --from=builder /app/target/release/cv-render /app/
 COPY --from=builder /app/src/so/libsynctex_parser.so /usr/lib/
 RUN mkdir -p /usr/share/fonts/ && mkdir -p /app/config/ && mkdir -p /root/.ssh
 COPY --from=builder /app/log4rs.yaml /app/
-RUN RUN tlmgr option repository https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2025/tlnet-final && \
+RUN tlmgr option repository https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2025/tlnet-final && \
     tlmgr update --self && tlmgr install ctex moderncv fontawesome5 fontawesome nth\ 
     academicons multirow arydshln titlesec enumitem makecell relsize\
     tcolorbox environ tikzfill csquotes xifthen ifmtarg tex-gyre && \
