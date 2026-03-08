@@ -337,14 +337,7 @@ async fn run_xelatex_and_log(
         .unwrap_or_else(|| "unknown (terminated by signal)".to_string());
 
     if status.success() {
-        info!(
-            "xelatex compilation succeeded: tex_file={}, compile_dir={}, exit_code={}",
-            tex_file, compile_dir, exit_code
-        );
-        // Upload and update status
-        update_queue_compile_result_sync(params.clone(), Some(CompileResult::Success));
-        do_upload_pdf_to_texhub(params, compile_dir);
-        let _ = open_write_end_marker(log_file_path, params);
+        handle_compile_success(tex_file, compile_dir, &exit_code, params, log_file_path);
         Ok(())
     } else {
         // Compilation failed - output detailed error information
@@ -367,17 +360,36 @@ async fn run_xelatex_and_log(
         };
 
         if !combined.is_empty() {
-            error!("xelatex combined output (tail):\n{}", &combined.chars().rev().take(1200).collect::<String>().chars().rev().collect::<String>() );
+            error!(
+                "xelatex combined output (tail):\n{}",
+                &combined
+                    .chars()
+                    .rev()
+                    .take(1200)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect::<String>()
+            );
         }
 
         // Try to extract key error information from the combined output
         let error_summary = extract_compilation_errors(&combined, "");
         if !error_summary.is_empty() {
-            error!("Key compilation errors detected:\n{}，log file: {}", error_summary, log_file_path);
+            error!(
+                "Key compilation errors detected:\n{}，log file: {}",
+                error_summary, log_file_path
+            );
         }
 
         // Write error details to log file (append combined content under STDOUT)
-        if let Err(e) = write_compilation_errors_to_log(log_file_path, &combined, "", exit_code.as_str(), params) {
+        if let Err(e) = write_compilation_errors_to_log(
+            log_file_path,
+            &combined,
+            "",
+            exit_code.as_str(),
+            params,
+        ) {
             warn!("Failed to write compilation errors to log file: {}", e);
         }
 
@@ -391,6 +403,25 @@ async fn run_xelatex_and_log(
         let _ = open_write_end_marker(log_file_path, params);
         Err(error_msg)
     }
+}
+
+fn handle_compile_success(
+    tex_file: &str,
+    compile_dir: &str,
+    exit_code: &str,
+    params: &CompileAppParams,
+    log_file_path: &str,
+) {
+    info!(
+        "xelatex compilation succeeded: tex_file={}, compile_dir={}, exit_code={}",
+        tex_file, compile_dir, exit_code
+    );
+    // Upload and update status
+    update_queue_compile_result_sync(params.clone(), Some(CompileResult::Success));
+    do_upload_output_to_texhub(params, compile_dir, "pdf".to_owned());
+    // upload the compile log
+    do_upload_output_to_texhub(params, compile_dir, "log".to_owned());
+    let _ = open_write_end_marker(log_file_path, params);
 }
 
 /// Extract key error messages from xelatex output
@@ -770,15 +801,15 @@ fn open_write_end_marker(log_file_path: &str, params: &CompileAppParams) -> Resu
     return Ok(());
 }
 
-fn do_upload_pdf_to_texhub(params: &CompileAppParams, compile_dir: &str) {
+fn do_upload_output_to_texhub(params: &CompileAppParams, compile_dir: &str, extension: String) {
     // upload pdf (best-effort)
     let pdf_file_name = format!(
-        "{}.pdf",
+        "{}.{}",
         params
             .file_path
             .split('.')
             .next()
-            .unwrap_or(&params.file_path)
+            .unwrap_or(&params.file_path), extension
     );
     let pdf_path = format!(
         "{}/{}",
@@ -788,11 +819,11 @@ fn do_upload_pdf_to_texhub(params: &CompileAppParams, compile_dir: &str) {
             .unwrap()
             .to_string_lossy()
     );
-    info!("Uploading compiled PDF from path: {}", pdf_path);
+    info!("Uploading compiled output from path: {}", pdf_path);
     if Path::new(&pdf_path).exists() {
         let _ = upload_file_to_texhub(&pdf_path, &params.project_id);
     } else {
-        warn!("Compiled PDF not found at: {}", pdf_path);
+        warn!("Compiled output not found at: {}", pdf_path);
     }
 }
 
