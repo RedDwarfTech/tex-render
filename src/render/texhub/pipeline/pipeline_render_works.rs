@@ -398,7 +398,8 @@ async fn run_xelatex_and_log(
             exit_code,
             combined.len()
         );
-
+        // upload the compile log
+        do_upload_output_to_texhub(params, compile_dir, "log".to_owned());
         update_queue_compile_result_sync(params.clone(), Some(CompileResult::Failure));
         let _ = open_write_end_marker(log_file_path, params);
         Err(error_msg)
