@@ -340,7 +340,6 @@ async fn run_xelatex_and_log(
         handle_compile_success(tex_file, compile_dir, &exit_code, params, log_file_path);
         Ok(())
     } else {
-        // Compilation failed - output detailed error information
         error!(
             "xelatex compilation failed: tex_file={}, compile_dir={}, exit_code={}",
             tex_file, compile_dir, exit_code
@@ -349,8 +348,6 @@ async fn run_xelatex_and_log(
             "Compilation parameters: project_id={}, file_path={}, log_file={}",
             params.project_id, params.file_path, log_file_path
         );
-
-        // Read the combined log file (stdout+stderr redirected there)
         let combined = match fs::read_to_string(log_file_path) {
             Ok(s) => s,
             Err(e) => {
@@ -358,7 +355,6 @@ async fn run_xelatex_and_log(
                 String::new()
             }
         };
-
         if !combined.is_empty() {
             error!(
                 "xelatex combined output (tail):\n{}",
@@ -372,7 +368,6 @@ async fn run_xelatex_and_log(
                     .collect::<String>()
             );
         }
-
         // Try to extract key error information from the combined output
         let error_summary = extract_compilation_errors(&combined, "");
         if !error_summary.is_empty() {
@@ -381,7 +376,6 @@ async fn run_xelatex_and_log(
                 error_summary, log_file_path
             );
         }
-
         // Write error details to log file (append combined content under STDOUT)
         if let Err(e) = write_compilation_errors_to_log(
             log_file_path,
@@ -392,13 +386,12 @@ async fn run_xelatex_and_log(
         ) {
             warn!("Failed to write compilation errors to log file: {}", e);
         }
-
         let error_msg = format!(
             "xelatex compilation failed (exit code: {}). combined_log_len={}. Check logs for details.",
             exit_code,
             combined.len()
         );
-        // upload the compile log
+        do_upload_output_to_texhub(params, compile_dir, "pdf".to_owned());
         do_upload_output_to_texhub(params, compile_dir, "log".to_owned());
         update_queue_compile_result_sync(params.clone(), Some(CompileResult::Failure));
         let _ = open_write_end_marker(log_file_path, params);
@@ -417,10 +410,8 @@ fn handle_compile_success(
         "xelatex compilation succeeded: tex_file={}, compile_dir={}, exit_code={}",
         tex_file, compile_dir, exit_code
     );
-    // Upload and update status
     update_queue_compile_result_sync(params.clone(), Some(CompileResult::Success));
     do_upload_output_to_texhub(params, compile_dir, "pdf".to_owned());
-    // upload the compile log
     do_upload_output_to_texhub(params, compile_dir, "log".to_owned());
     let _ = open_write_end_marker(log_file_path, params);
 }
