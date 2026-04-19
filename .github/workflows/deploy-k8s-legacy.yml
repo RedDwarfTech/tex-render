@@ -2,7 +2,7 @@ name: cv-render-k8s-pro
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main-legacy ]
 
 jobs:
   build:
