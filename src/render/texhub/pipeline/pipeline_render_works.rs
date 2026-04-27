@@ -264,6 +264,160 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
 }
 
 /**
+ * Step 3 (enhanced): Run latexmk (xelatex mode) and capture stdout/stderr to a log file.
+ */
+async fn run_latexmk_and_log(
+    tex_file: &str,
+    compile_dir: &str,
+    log_file_path: &str,
+    params: &CompileAppParams,
+) -> Result<(), String> {
+    info!(
+        "Starting latexmk compilation (xelatex mode): tex_file={}, compile_dir={}, log_file={}",
+        tex_file, compile_dir, log_file_path
+    );
+
+    // Open the log file and redirect both stdout and stderr into it so
+    // the tailing watcher can observe output in real time.
+    let log_file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(log_file_path)
+        .map_err(|e| {
+            error!(
+                "Failed to open log file for latexmk: {}, tex_file={}, compile_dir={}, params: {:?}",
+                e, tex_file, compile_dir, params
+            );
+            format!("Failed to open log file: {}", e)
+        })?;
+
+    // write a small header so watchers know compilation started
+    if let Err(e) = writeln!(&log_file, "==== LATEXMK START (XELATEX MODE) ====") {
+        warn!("Failed to write start marker to log: {}", e);
+    }
+
+    let log_clone = match log_file.try_clone() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to clone log file handle: {}", e);
+            return Err(format!("Failed to clone log file handle: {}", e));
+        }
+    };
+
+    let mut child = match Command::new("latexmk")
+        .arg("-xelatex")
+        .arg("-interaction=nonstopmode")
+        .arg("-synctex=1")
+        .arg(tex_file)
+        .current_dir(compile_dir)
+        .stdout(Stdio::from(log_clone))
+        .stderr(Stdio::from(log_file))
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            error!(
+                "Failed to start latexmk process: tex_file={}, compile_dir={}, error={}, params: {:?}",
+                tex_file, compile_dir, e, params
+            );
+            return Err(format!("Failed to start latexmk process: {}", e));
+        }
+    };
+
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Failed to wait on latexmk process: {}", e);
+            return Err(format!("Failed to wait on latexmk process: {}", e));
+        }
+    };
+
+    let exit_code = status
+        .code()
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "unknown (terminated by signal)".to_string());
+
+    if status.success() {
+        handle_compile_success(tex_file, compile_dir, &exit_code, params, log_file_path);
+        Ok(())
+    } else {
+        error!(
+            "latexmk compilation failed (xelatex mode): tex_file={}, compile_dir={}, exit_code={}",
+            tex_file, compile_dir, exit_code
+        );
+        error!(
+            "Compilation parameters: project_id={}, file_path={}, log_file={}",
+            params.project_id, params.file_path, log_file_path
+        );
+        let combined = match fs::read_to_string(log_file_path) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Failed to read combined log file: {}", e);
+                String::new()
+            }
+        };
+        if !combined.is_empty() {
+            error!(
+                "latexmk combined output (tail):\n{}",
+                &combined
+                    .chars()
+                    .rev()
+                    .take(1200)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect::<String>()
+            );
+        }
+        // Try to extract key error information from the combined output
+        let error_summary = extract_compilation_errors(&combined, "");
+        if !error_summary.is_empty() {
+            error!(
+                "Key compilation errors detected:\n{}，log file: {}",
+                error_summary, log_file_path
+            );
+        }
+        // Write error details to log file (append combined content under STDOUT)
+        if let Err(e) = write_compilation_errors_to_log(
+            log_file_path,
+            &combined,
+            "",
+            exit_code.as_str(),
+            params,
+        ) {
+            warn!("Failed to write compilation errors to log file: {}", e);
+        }
+        let error_msg = format!(
+            "latexmk compilation failed (exit code: {}). combined_log_len={}. Check logs for details.",
+            exit_code,
+            combined.len()
+        );
+        do_upload_output_to_texhub(params, compile_dir, "pdf".to_owned());
+        do_upload_output_to_texhub(params, compile_dir, "log".to_owned());
+        update_queue_compile_result_sync(params.clone(), Some(CompileResult::Failure));
+        let _ = open_write_end_marker(log_file_path, params);
+        Err(error_msg)
+    }
+}
+
+fn handle_compile_success(
+    tex_file: &str,
+    compile_dir: &str,
+    exit_code: &str,
+    params: &CompileAppParams,
+    log_file_path: &str,
+) {
+    info!(
+        "xelatex compilation succeeded: tex_file={}, compile_dir={}, exit_code={}",
+        tex_file, compile_dir, exit_code
+    );
+    update_queue_compile_result_sync(params.clone(), Some(CompileResult::Success));
+    do_upload_output_to_texhub(params, compile_dir, "pdf".to_owned());
+    do_upload_output_to_texhub(params, compile_dir, "log".to_owned());
+    let _ = open_write_end_marker(log_file_path, params);
+}
+
+/**
  * Step 3 (enhanced): Run xelatex and capture stdout/stderr to a log file.
  */
 async fn run_xelatex_and_log(
@@ -397,23 +551,6 @@ async fn run_xelatex_and_log(
         let _ = open_write_end_marker(log_file_path, params);
         Err(error_msg)
     }
-}
-
-fn handle_compile_success(
-    tex_file: &str,
-    compile_dir: &str,
-    exit_code: &str,
-    params: &CompileAppParams,
-    log_file_path: &str,
-) {
-    info!(
-        "xelatex compilation succeeded: tex_file={}, compile_dir={}, exit_code={}",
-        tex_file, compile_dir, exit_code
-    );
-    update_queue_compile_result_sync(params.clone(), Some(CompileResult::Success));
-    do_upload_output_to_texhub(params, compile_dir, "pdf".to_owned());
-    do_upload_output_to_texhub(params, compile_dir, "log".to_owned());
-    let _ = open_write_end_marker(log_file_path, params);
 }
 
 /// Extract key error messages from xelatex output
@@ -777,7 +914,7 @@ async fn compile_project(
     log_file_path: &str,
 ) -> Result<(), String> {
     let tex_file_name = tex_filename_from_path(&params.file_path);
-    return run_xelatex_and_log(&tex_file_name, &compile_dir, log_file_path, params).await;
+    return run_latexmk_and_log(&tex_file_name, &compile_dir, log_file_path, params).await;
 }
 
 fn open_write_end_marker(log_file_path: &str, params: &CompileAppParams) -> Result<(), String> {
