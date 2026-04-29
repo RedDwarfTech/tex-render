@@ -7,3 +7,9 @@ rustflags = [
     "-L", "./src/so"
     ]
 incremental = true
+
+[source.crates-io]
+replace-with = 'tuna'
+
+[source.tuna]
+registry = "sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/"
