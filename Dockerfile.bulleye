@@ -6,6 +6,7 @@ RUN rustup default stable
 RUN git clone --depth 1 --branch 2020 https://github.com/RedDwarfTech/synctex.git
 RUN cd synctex && gcc -c -fPIC *.c && gcc -shared *.o -o libsynctex_parser.so -lz
 RUN cp synctex/libsynctex_parser.so ./src/so/
+RUN cp /app/.cargo/config.prod.toml /app/.cargo/config.toml
 RUN RUSTFLAGS='-L ./src/so' cargo build --release
 
 FROM registry.cn-hongkong.aliyuncs.com/reddwarf-pro/latex:876f59bccea12951fecb085d8c89d0aa8b60c29e
