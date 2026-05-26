@@ -313,6 +313,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arcstr"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03918c3dbd7701a85c6b9887732e2921175f26c350b4563841d0958c21d57e6d"
+
+[[package]]
 name = "arraydeque"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -913,7 +919,7 @@ dependencies = [
  "openssl-sys",
  "parking_lot",
  "pq-sys",
- "redis",
+ "redis 1.2.1",
  "redlock",
  "reqwest 0.13.3",
  "rust_wheel",
@@ -3285,13 +3291,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "redis"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72d32a1ac9123f0d84fda64bfc02a271d9868483162dd2d9099b5c362ece064c"
+dependencies = [
+ "arcstr",
+ "combine",
+ "itoa",
+ "num-bigint",
+ "percent-encoding",
+ "ryu",
+ "sha1_smol",
+ "socket2 0.6.1",
+ "url",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "redlock"
 version = "2.0.0"
 source = "git+https://github.com/badboy/redlock-rs.git?branch=main#3b62edc59f0efe0a3b90100bcadb55344874dc5d"
 dependencies = [
  "chrono",
  "rand 0.8.5",
- "redis",
+ "redis 0.27.2",
 ]
 
 [[package]]
@@ -3653,7 +3677,7 @@ dependencies = [
  "mobc",
  "num-traits 0.2.19",
  "rand 0.8.5",
- "redis",
+ "redis 0.27.2",
  "reqwest 0.11.27",
  "ring 0.16.20",
  "rocket",
@@ -5656,6 +5680,12 @@ name = "writeable"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yaml-rust"

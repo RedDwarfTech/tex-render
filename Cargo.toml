@@ -26,7 +26,7 @@ futures-util = { version = "0.3.25", default-features = false, features = [
 futures = "0.3"
 actix-http = "3.11.2"
 actix-rt = "2.11.0"
-redis = { version = "=0.27.2", features = ["streams"] }
+redis = { version = "=1.2.1", features = ["streams"] }
 redlock = {git="https://github.com/badboy/redlock-rs.git", branch="main"}
 pq-sys = { version = "0.7.5", features = ["bundled"] }
 openssl-sys = { version = "0.9.109", features = ["vendored"] }

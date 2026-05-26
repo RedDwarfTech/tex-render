@@ -12,14 +12,15 @@ use redis::Commands;
 use redlock::{Lock, RedLock};
 use rust_wheel::config::{
     app::app_conf_reader::get_app_config,
-    cache::redis_util::{delete_stream_element, get_con},
+    cache::redis_util::delete_stream_element,
 };
 use std::net::ToSocketAddrs;
 
 pub async fn consume_redis_stream() {
-    let mut con = get_con();
-    let stream_key = get_app_config("cv.compile_stream_redis_key");
     let redis_conn_str = env::var("REDIS_URL").unwrap();
+    let client = redis::Client::open(redis_conn_str.as_str()).unwrap();
+    let mut con = client.get_connection().unwrap();
+    let stream_key = get_app_config("cv.compile_stream_redis_key");
     let stream_id = "0";
     loop {
         let rl = RedLock::new(vec![redis_conn_str.as_str()]);
