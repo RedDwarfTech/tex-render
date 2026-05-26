@@ -31,5 +31,5 @@ redlock = {git="https://github.com/badboy/redlock-rs.git", branch="main"}
 pq-sys = { version = "0.7.5", features = ["bundled"] }
 openssl-sys = { version = "0.9.109", features = ["vendored"] }
 notify = "8.2.0"
-zip = "0.6"
+zip = "8.6.0"
 tokio-cron-scheduler = "*"
