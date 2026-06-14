@@ -25,6 +25,8 @@ use std::{
 };
 use tokio::task;
 use zip::read::ZipArchive;
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipWriter};
 
 // Recursively copy a directory's contents from `src` to `dst`.
 #[allow(dead_code)]
@@ -394,6 +396,7 @@ async fn run_latexmk_and_log(
         );
         do_upload_output_to_texhub(params, compile_dir, "pdf".to_owned());
         do_upload_output_to_texhub(params, compile_dir, "log".to_owned());
+        do_upload_full_output_to_texhub(params, compile_dir);
         update_queue_compile_result_sync(params.clone(), Some(CompileResult::Failure));
         let _ = open_write_end_marker(log_file_path, params);
         Err(error_msg)
@@ -414,6 +417,7 @@ fn handle_compile_success(
     update_queue_compile_result_sync(params.clone(), Some(CompileResult::Success));
     do_upload_output_to_texhub(params, compile_dir, "pdf".to_owned());
     do_upload_output_to_texhub(params, compile_dir, "log".to_owned());
+    do_upload_full_output_to_texhub(params, compile_dir);
     let _ = open_write_end_marker(log_file_path, params);
 }
 
@@ -582,22 +586,12 @@ fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams, con: 
     }
 }
 
-/**
- * Step 5: Upload the compiled PDF file to texhub server via HTTP.
- * Uses multipart form data or binary upload.
- */
-fn upload_file_to_texhub(file_path: &str, project_id: &str) -> Result<(), String> {
-    let texhub_api_url = get_app_config("cv.texhub_api_url");
-    let upload_url = format!("{}/inner-tex/project/upload-output", texhub_api_url);
-
-    let file_data = fs::read(file_path).map_err(|e| format!("Failed to read PDF file: {}", e))?;
-
-    // Manually build multipart/form-data body to avoid requiring reqwest multipart feature.
-    let file_name = Path::new(file_path)
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "output.pdf".to_string());
-
+fn build_multipart_upload_body(
+    project_id: &str,
+    file_name: &str,
+    file_data: &[u8],
+    mime_type: &str,
+) -> (Vec<u8>, String) {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -605,13 +599,11 @@ fn upload_file_to_texhub(file_path: &str, project_id: &str) -> Result<(), String
     let boundary = format!("----rust-multipart-{}-{}", project_id, ts);
     let mut body: Vec<u8> = Vec::new();
 
-    // project_id field
     body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
     body.extend_from_slice(b"Content-Disposition: form-data; name=\"project_id\"\r\n\r\n");
     body.extend_from_slice(project_id.as_bytes());
     body.extend_from_slice(b"\r\n");
 
-    // file field
     body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
     body.extend_from_slice(
         format!(
@@ -620,20 +612,27 @@ fn upload_file_to_texhub(file_path: &str, project_id: &str) -> Result<(), String
         )
         .as_bytes(),
     );
-    body.extend_from_slice(b"Content-Type: application/pdf\r\n\r\n");
-    body.extend_from_slice(&file_data);
+    body.extend_from_slice(format!("Content-Type: {}\r\n\r\n", mime_type).as_bytes());
+    body.extend_from_slice(file_data);
     body.extend_from_slice(b"\r\n");
-
-    // final boundary
     body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
 
     let content_type = format!("multipart/form-data; boundary={}", boundary);
+    (body, content_type)
+}
+
+fn send_multipart_upload(
+    upload_url: &str,
+    body: Vec<u8>,
+    content_type: String,
+    upload_label: &str,
+) -> Result<(), String> {
     info!(
-        "Uploading PDF to texhub at URL: {} (multipart manual)",
-        upload_url
+        "Uploading {} to texhub at URL: {} (multipart manual)",
+        upload_label, upload_url
     );
     match http_client_sync()
-        .post(&upload_url)
+        .post(upload_url)
         .header("Content-Type", content_type)
         .body(body)
         .send()
@@ -649,20 +648,108 @@ fn upload_file_to_texhub(file_path: &str, project_id: &str) -> Result<(), String
                     Err(e) => format!("<failed to read body: {}>", e),
                 };
                 error!(
-                    "PDF upload failed. url: {} status: {} headers: {:?} body: {}",
-                    upload_url, status, headers, body_text
+                    "{} upload failed. url: {} status: {} headers: {:?} body: {}",
+                    upload_label, upload_url, status, headers, body_text
                 );
                 Err(format!("Upload failed with status: {}", status))
             }
         }
         Err(e) => {
             error!(
-                "HTTP request to upload PDF failed: {}, url: {}",
-                e, upload_url
+                "HTTP request to upload {} failed: {}, url: {}",
+                upload_label, e, upload_url
             );
             Err(format!("HTTP request failed: {}", e))
         }
     }
+}
+
+/**
+ * Step 5: Upload the compiled PDF file to texhub server via HTTP.
+ * Uses multipart form data or binary upload.
+ */
+fn upload_file_to_texhub(file_path: &str, project_id: &str) -> Result<(), String> {
+    let texhub_api_url = get_app_config("cv.texhub_api_url");
+    let upload_url = format!("{}/inner-tex/project/upload-output", texhub_api_url);
+
+    let file_data = fs::read(file_path).map_err(|e| format!("Failed to read PDF file: {}", e))?;
+
+    let file_name = Path::new(file_path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "output.pdf".to_string());
+
+    let (body, content_type) =
+        build_multipart_upload_body(project_id, &file_name, &file_data, "application/pdf");
+    send_multipart_upload(&upload_url, body, content_type, "PDF")
+}
+
+fn zip_directory(src_dir: &str, zip_path: &str) -> Result<(), String> {
+    let src_path = Path::new(src_dir);
+    if !src_path.exists() {
+        return Err(format!("Directory not found: {}", src_dir));
+    }
+
+    let zip_file =
+        File::create(zip_path).map_err(|e| format!("Failed to create zip file: {}", e))?;
+    let mut zip = ZipWriter::new(zip_file);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    fn add_path_to_zip(
+        zip: &mut ZipWriter<File>,
+        path: &Path,
+        base: &Path,
+        options: SimpleFileOptions,
+    ) -> Result<(), String> {
+        if path.is_dir() {
+            for entry in fs::read_dir(path)
+                .map_err(|e| format!("Failed to read dir {:?}: {}", path, e))?
+            {
+                let entry = entry.map_err(|e| format!("Failed to read dir entry: {}", e))?;
+                add_path_to_zip(zip, &entry.path(), base, options)?;
+            }
+            Ok(())
+        } else if path.is_file() {
+            let relative = path
+                .strip_prefix(base)
+                .map_err(|e| format!("Failed to get relative path for {:?}: {}", path, e))?;
+            let name = relative.to_string_lossy().replace('\\', "/");
+            zip.start_file(name.clone(), options)
+                .map_err(|e| format!("Failed to start zip entry {}: {}", name, e))?;
+            let mut file =
+                File::open(path).map_err(|e| format!("Failed to open file {:?}: {}", path, e))?;
+            std::io::copy(&mut file, zip)
+                .map_err(|e| format!("Failed to write file {:?} to zip: {}", path, e))?;
+            Ok(())
+        } else {
+            Ok(())
+        }
+    }
+
+    add_path_to_zip(&mut zip, src_path, src_path, options)?;
+    zip.finish()
+        .map_err(|e| format!("Failed to finalize zip file: {}", e))?;
+    Ok(())
+}
+
+/**
+ * Step 6: Upload the full compile output directory as a zip archive to texhub server.
+ */
+fn upload_full_output_to_texhub(file_path: &str, project_id: &str) -> Result<(), String> {
+    let texhub_api_url = get_app_config("cv.texhub_api_url");
+    let upload_url = format!("{}/inner-tex/project/upload-full-output", texhub_api_url);
+
+    let file_data =
+        fs::read(file_path).map_err(|e| format!("Failed to read full output zip: {}", e))?;
+
+    let file_name = Path::new(file_path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "full-output.zip".to_string());
+
+    let (body, content_type) =
+        build_multipart_upload_body(project_id, &file_name, &file_data, "application/zip");
+    send_multipart_upload(&upload_url, body, content_type, "full output")
 }
 
 fn write_end_marker(file: &mut std::fs::File, params: &CompileAppParams) {
@@ -683,6 +770,7 @@ fn write_end_marker(file: &mut std::fs::File, params: &CompileAppParams) {
  * step 3: run xelatex command to compile the tex file
  * step 4: write compile log file to redis stream
  * step 5: upload the compiled pdf file to texhub server by http
+ * step 6: zip compile output and upload to /inner-tex/project/upload-full-output
  */
 pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<CompileResult> {
     // compute compile and log paths
@@ -802,7 +890,8 @@ fn do_upload_output_to_texhub(params: &CompileAppParams, compile_dir: &str, exte
             .file_path
             .split('.')
             .next()
-            .unwrap_or(&params.file_path), extension
+            .unwrap_or(&params.file_path),
+        extension
     );
     let pdf_path = format!(
         "{}/{}",
@@ -818,6 +907,29 @@ fn do_upload_output_to_texhub(params: &CompileAppParams, compile_dir: &str, exte
     } else {
         warn!("Compiled output not found at: {}", pdf_path);
     }
+}
+
+fn do_upload_full_output_to_texhub(params: &CompileAppParams, compile_dir: &str) {
+    let zip_path = format!("/tmp/texhub_full_output_{}.zip", params.project_id);
+    info!(
+        "Packaging compile output for upload: compile_dir={}, zip_path={}",
+        compile_dir, zip_path
+    );
+    if let Err(e) = zip_directory(compile_dir, &zip_path) {
+        error!("Failed to zip compile output: {}", e);
+        return;
+    }
+    match upload_full_output_to_texhub(&zip_path, &params.project_id) {
+        Ok(_) => info!(
+            "Full output upload succeeded for project: {}",
+            params.project_id
+        ),
+        Err(e) => error!(
+            "Full output upload failed for project {}: {}",
+            params.project_id, e
+        ),
+    }
+    let _ = fs::remove_file(&zip_path);
 }
 
 fn tail_log(params: &CompileAppParams, log_file_path: &str) -> notify::Result<()> {
