@@ -1,5 +1,5 @@
 use crate::controller::tex::tex_controller::update_queue_compile_result_sync;
-use crate::rest::client::cv_client::http_client_sync;
+use crate::rest::client::cv_client::{http_client_sync, http_client_sync_large_upload};
 use crate::{
     model::project::compile_app_params::CompileAppParams, rest::client::cv_client::http_client,
 };
@@ -656,10 +656,112 @@ fn send_multipart_upload(
         }
         Err(e) => {
             error!(
-                "HTTP request to upload {} failed: {}, url: {}",
+                "HTTP request to upload {} failed: {:#}, url: {}",
                 upload_label, e, upload_url
             );
-            Err(format!("HTTP request failed: {}", e))
+            Err(format!("HTTP request failed: {:#}", e))
+        }
+    }
+}
+
+fn write_multipart_upload_to_file(
+    project_id: &str,
+    file_name: &str,
+    file_path: &str,
+    mime_type: &str,
+    multipart_path: &str,
+) -> Result<String, String> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let boundary = format!("----rust-multipart-{}-{}", project_id, ts);
+    let mut out = File::create(multipart_path)
+        .map_err(|e| format!("Failed to create multipart temp file: {}", e))?;
+
+    out.write_all(format!("--{}\r\n", boundary).as_bytes())
+        .map_err(|e| format!("Failed to write multipart header: {}", e))?;
+    out.write_all(b"Content-Disposition: form-data; name=\"project_id\"\r\n\r\n")
+        .map_err(|e| format!("Failed to write project_id field: {}", e))?;
+    out.write_all(project_id.as_bytes())
+        .map_err(|e| format!("Failed to write project_id value: {}", e))?;
+    out.write_all(b"\r\n")
+        .map_err(|e| format!("Failed to write multipart separator: {}", e))?;
+
+    out.write_all(format!("--{}\r\n", boundary).as_bytes())
+        .map_err(|e| format!("Failed to write file field header: {}", e))?;
+    out.write_all(
+        format!(
+            "Content-Disposition: form-data; name=\"file\"; filename=\"{}\"\r\n",
+            file_name
+        )
+        .as_bytes(),
+    )
+    .map_err(|e| format!("Failed to write file disposition: {}", e))?;
+    out.write_all(format!("Content-Type: {}\r\n\r\n", mime_type).as_bytes())
+        .map_err(|e| format!("Failed to write file content type: {}", e))?;
+
+    let mut input = File::open(file_path)
+        .map_err(|e| format!("Failed to open upload file {:?}: {}", file_path, e))?;
+    std::io::copy(&mut input, &mut out)
+        .map_err(|e| format!("Failed to stream file into multipart body: {}", e))?;
+
+    out.write_all(b"\r\n")
+        .map_err(|e| format!("Failed to write multipart trailing separator: {}", e))?;
+    out.write_all(format!("--{}--\r\n", boundary).as_bytes())
+        .map_err(|e| format!("Failed to write multipart closing boundary: {}", e))?;
+    out.sync_all()
+        .map_err(|e| format!("Failed to sync multipart temp file: {}", e))?;
+
+    Ok(format!("multipart/form-data; boundary={}", boundary))
+}
+
+fn send_multipart_upload_from_file(
+    upload_url: &str,
+    multipart_path: &str,
+    content_type: String,
+    upload_label: &str,
+) -> Result<(), String> {
+    let multipart_size = fs::metadata(multipart_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    info!(
+        "Uploading {} ({} bytes) to texhub at URL: {} (multipart stream)",
+        upload_label, multipart_size, upload_url
+    );
+
+    let file = File::open(multipart_path)
+        .map_err(|e| format!("Failed to open multipart temp file: {}", e))?;
+
+    match http_client_sync_large_upload()
+        .post(upload_url)
+        .header("Content-Type", content_type)
+        .body(file)
+        .send()
+    {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                Ok(())
+            } else {
+                let status = resp.status();
+                let headers = resp.headers().clone();
+                let body_text = match resp.text() {
+                    Ok(t) => t,
+                    Err(e) => format!("<failed to read body: {}>", e),
+                };
+                error!(
+                    "{} upload failed. url: {} status: {} headers: {:?} body: {}",
+                    upload_label, upload_url, status, headers, body_text
+                );
+                Err(format!("Upload failed with status: {}", status))
+            }
+        }
+        Err(e) => {
+            error!(
+                "HTTP request to upload {} failed: {:#}, url: {}, multipart_size: {}",
+                upload_label, e, upload_url, multipart_size
+            );
+            Err(format!("HTTP request failed: {:#}", e))
         }
     }
 }
@@ -739,17 +841,34 @@ fn upload_full_output_to_texhub(file_path: &str, project_id: &str) -> Result<(),
     let texhub_api_url = get_app_config("cv.texhub_api_url");
     let upload_url = format!("{}/inner-tex/project/upload-full-output", texhub_api_url);
 
-    let file_data =
-        fs::read(file_path).map_err(|e| format!("Failed to read full output zip: {}", e))?;
+    let zip_size = fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
+    info!(
+        "Full output zip ready for upload: path={}, size={} bytes",
+        file_path, zip_size
+    );
 
     let file_name = Path::new(file_path)
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "full-output.zip".to_string());
 
-    let (body, content_type) =
-        build_multipart_upload_body(project_id, &file_name, &file_data, "application/zip");
-    send_multipart_upload(&upload_url, body, content_type, "full output")
+    let multipart_path = format!("/tmp/texhub_full_output_multipart_{}.tmp", project_id);
+    let content_type = write_multipart_upload_to_file(
+        project_id,
+        &file_name,
+        file_path,
+        "application/zip",
+        &multipart_path,
+    )?;
+
+    let result = send_multipart_upload_from_file(
+        &upload_url,
+        &multipart_path,
+        content_type,
+        "full output",
+    );
+    let _ = fs::remove_file(&multipart_path);
+    result
 }
 
 fn write_end_marker(file: &mut std::fs::File, params: &CompileAppParams) {

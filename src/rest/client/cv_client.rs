@@ -48,6 +48,19 @@ pub fn http_client_sync() -> &'static reqwest::blocking::Client {
     })
 }
 
+pub fn http_client_sync_large_upload() -> &'static reqwest::blocking::Client {
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(600))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .pool_idle_timeout(std::time::Duration::from_secs(30))
+            .pool_max_idle_per_host(4)
+            .build()
+            .expect("Failed to build reqwest large upload client")
+    })
+}
+
 pub async fn get_queue_cv() {
     let client = Client::new();
     let url_path = "/cv/gen/v1/pick";
