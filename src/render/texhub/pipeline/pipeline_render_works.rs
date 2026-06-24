@@ -57,6 +57,71 @@ fn tex_filename_from_path(path: &str) -> String {
         .to_string()
 }
 
+fn xelatex_log_path(compile_dir: &str, tex_file: &str) -> String {
+    let base = Path::new(tex_file)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(tex_file);
+    format!("{}/{}.log", compile_dir, base)
+}
+
+fn latexmk_log_path(compile_dir: &str) -> String {
+    format!("{}/.latexmk.log", compile_dir)
+}
+
+fn end_marker_reached(end_marker_path: &str) -> bool {
+    fs::read_to_string(end_marker_path)
+        .map(|s| s.contains("====END===="))
+        .unwrap_or(false)
+}
+
+fn read_xelatex_log(compile_dir: &str, tex_file: &str) -> Option<String> {
+    let log_path = xelatex_log_path(compile_dir, tex_file);
+    match fs::read_to_string(&log_path) {
+        Ok(content) if !content.is_empty() => Some(content),
+        Ok(_) => None,
+        Err(e) => {
+            warn!("Failed to read xelatex log at {}: {}", log_path, e);
+            None
+        }
+    }
+}
+
+/// Remove stale latexmk artifacts so the next run always recompiles instead of
+/// reporting "Nothing to do" with a cached previous error.
+fn clean_latexmk_artifacts(compile_dir: &str, tex_file: &str) {
+    let status = Command::new("latexmk")
+        .arg("-C")
+        .arg("-xelatex")
+        .arg(tex_file)
+        .current_dir(compile_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            info!(
+                "Cleaned latexmk artifacts before compile: compile_dir={}, tex_file={}",
+                compile_dir, tex_file
+            );
+        }
+        Ok(s) => {
+            warn!(
+                "latexmk -C exited with status {:?}: compile_dir={}, tex_file={}",
+                s.code(),
+                compile_dir,
+                tex_file
+            );
+        }
+        Err(e) => {
+            warn!(
+                "Failed to run latexmk -C before compile: compile_dir={}, tex_file={}, error={}",
+                compile_dir, tex_file, e
+            );
+        }
+    }
+}
+
 #[allow(dead_code)]
 fn run_xelatex_in_dir(tex_file: &str, dir: &str) -> Result<std::process::Output, std::io::Error> {
     Command::new("xelatex")
@@ -266,43 +331,42 @@ fn unzip_project(zip_path: &str, extract_dir: &str) -> Result<(), String> {
 }
 
 /**
- * Step 3 (enhanced): Run latexmk (xelatex mode) and capture stdout/stderr to a log file.
+ * Step 3: Run latexmk (xelatex mode).
+ * latexmk stdout/stderr goes to a local `.latexmk.log` (server-side only).
+ * The xelatex `.log` file is tailed to Redis for the frontend.
  */
 async fn run_latexmk_and_log(
     tex_file: &str,
     compile_dir: &str,
-    log_file_path: &str,
+    end_marker_path: &str,
     params: &CompileAppParams,
 ) -> Result<(), String> {
+    let latexmk_log_path = latexmk_log_path(compile_dir);
     info!(
-        "Starting latexmk compilation (xelatex mode): tex_file={}, compile_dir={}, log_file={}",
-        tex_file, compile_dir, log_file_path
+        "Starting latexmk compilation (xelatex mode): tex_file={}, compile_dir={}, latexmk_log={}",
+        tex_file, compile_dir, latexmk_log_path
     );
 
-    // Open the log file and redirect both stdout and stderr into it so
-    // the tailing watcher can observe output in real time.
-    let log_file = OpenOptions::new()
-        .append(true)
+    clean_latexmk_artifacts(compile_dir, tex_file);
+
+    let latexmk_log = OpenOptions::new()
+        .write(true)
         .create(true)
-        .open(log_file_path)
+        .truncate(true)
+        .open(&latexmk_log_path)
         .map_err(|e| {
             error!(
-                "Failed to open log file for latexmk: {}, tex_file={}, compile_dir={}, params: {:?}",
+                "Failed to open latexmk log file: {}, tex_file={}, compile_dir={}, params: {:?}",
                 e, tex_file, compile_dir, params
             );
-            format!("Failed to open log file: {}", e)
+            format!("Failed to open latexmk log file: {}", e)
         })?;
 
-    // write a small header so watchers know compilation started
-    if let Err(e) = writeln!(&log_file, "==== LATEXMK START (XELATEX MODE) ====") {
-        warn!("Failed to write start marker to log: {}", e);
-    }
-
-    let log_clone = match log_file.try_clone() {
+    let latexmk_log_stderr = match latexmk_log.try_clone() {
         Ok(c) => c,
         Err(e) => {
-            error!("Failed to clone log file handle: {}", e);
-            return Err(format!("Failed to clone log file handle: {}", e));
+            error!("Failed to clone latexmk log file handle: {}", e);
+            return Err(format!("Failed to clone latexmk log file handle: {}", e));
         }
     };
 
@@ -312,8 +376,8 @@ async fn run_latexmk_and_log(
         .arg("-synctex=1")
         .arg(tex_file)
         .current_dir(compile_dir)
-        .stdout(Stdio::from(log_clone))
-        .stderr(Stdio::from(log_file))
+        .stdout(Stdio::from(latexmk_log))
+        .stderr(Stdio::from(latexmk_log_stderr))
         .spawn()
     {
         Ok(c) => c,
@@ -322,6 +386,7 @@ async fn run_latexmk_and_log(
                 "Failed to start latexmk process: tex_file={}, compile_dir={}, error={}, params: {:?}",
                 tex_file, compile_dir, e, params
             );
+            let _ = open_write_end_marker(end_marker_path, params);
             return Err(format!("Failed to start latexmk process: {}", e));
         }
     };
@@ -330,6 +395,7 @@ async fn run_latexmk_and_log(
         Ok(s) => s,
         Err(e) => {
             error!("Failed to wait on latexmk process: {}", e);
+            let _ = open_write_end_marker(end_marker_path, params);
             return Err(format!("Failed to wait on latexmk process: {}", e));
         }
     };
@@ -340,7 +406,7 @@ async fn run_latexmk_and_log(
         .unwrap_or_else(|| "unknown (terminated by signal)".to_string());
 
     if status.success() {
-        handle_compile_success(tex_file, compile_dir, &exit_code, params, log_file_path);
+        handle_compile_success(tex_file, compile_dir, &exit_code, params, end_marker_path);
         Ok(())
     } else {
         error!(
@@ -348,57 +414,42 @@ async fn run_latexmk_and_log(
             tex_file, compile_dir, exit_code
         );
         error!(
-            "Compilation parameters: project_id={}, file_path={}, log_file={}",
-            params.project_id, params.file_path, log_file_path
+            "Compilation parameters: project_id={}, file_path={}, latexmk_log={}",
+            params.project_id, params.file_path, latexmk_log_path
         );
-        let combined = match fs::read_to_string(log_file_path) {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("Failed to read combined log file: {}", e);
-                String::new()
+        if let Ok(latexmk_output) = fs::read_to_string(&latexmk_log_path) {
+            if !latexmk_output.is_empty() {
+                error!(
+                    "latexmk output (tail, server-side only):\n{}",
+                    &latexmk_output
+                        .chars()
+                        .rev()
+                        .take(1200)
+                        .collect::<String>()
+                        .chars()
+                        .rev()
+                        .collect::<String>()
+                );
             }
-        };
-        if !combined.is_empty() {
-            error!(
-                "latexmk combined output (tail):\n{}",
-                &combined
-                    .chars()
-                    .rev()
-                    .take(1200)
-                    .collect::<String>()
-                    .chars()
-                    .rev()
-                    .collect::<String>()
-            );
         }
-        // Try to extract key error information from the combined output
-        let error_summary = extract_compilation_errors(&combined, "");
+        let xelatex_log = read_xelatex_log(compile_dir, tex_file);
+        let error_summary = extract_compilation_errors(xelatex_log.as_deref());
         if !error_summary.is_empty() {
             error!(
-                "Key compilation errors detected:\n{}，log file: {}",
-                error_summary, log_file_path
+                "Key compilation errors detected:\n{}，xelatex log: {}",
+                error_summary,
+                xelatex_log_path(compile_dir, tex_file)
             );
         }
-        // Write error details to log file (append combined content under STDOUT)
-        if let Err(e) = write_compilation_errors_to_log(
-            log_file_path,
-            &combined,
-            "",
-            exit_code.as_str(),
-            params,
-        ) {
-            warn!("Failed to write compilation errors to log file: {}", e);
-        }
         let error_msg = format!(
-            "latexmk compilation failed (exit code: {}). combined_log_len={}. Check logs for details.",
-            exit_code,
-            combined.len()
+            "latexmk compilation failed (exit code: {}). See xelatex log for details.",
+            exit_code
         );
         do_upload_output_to_texhub(params, compile_dir, "pdf".to_owned());
         do_upload_output_to_texhub(params, compile_dir, "log".to_owned());
         do_upload_full_output_to_texhub(params, compile_dir);
         update_queue_compile_result_sync(params.clone(), Some(CompileResult::Failure));
-        let _ = open_write_end_marker(log_file_path, params);
+        let _ = open_write_end_marker(end_marker_path, params);
         Err(error_msg)
     }
 }
@@ -408,7 +459,7 @@ fn handle_compile_success(
     compile_dir: &str,
     exit_code: &str,
     params: &CompileAppParams,
-    log_file_path: &str,
+    end_marker_path: &str,
 ) {
     info!(
         "xelatex compilation succeeded: tex_file={}, compile_dir={}, exit_code={}",
@@ -418,87 +469,50 @@ fn handle_compile_success(
     do_upload_output_to_texhub(params, compile_dir, "pdf".to_owned());
     do_upload_output_to_texhub(params, compile_dir, "log".to_owned());
     do_upload_full_output_to_texhub(params, compile_dir);
-    let _ = open_write_end_marker(log_file_path, params);
+    let _ = open_write_end_marker(end_marker_path, params);
 }
 
-/// Extract key error messages from xelatex output
-fn extract_compilation_errors(stdout: &str, stderr: &str) -> String {
+/// Extract key error messages from the xelatex log (server-side diagnostics).
+fn extract_compilation_errors(xelatex_log: Option<&str>) -> String {
     let mut errors = Vec::new();
-    let combined = format!("{}\n{}", stdout, stderr);
 
-    // Look for common LaTeX error patterns
-    let error_patterns = vec![
-        ("Error:", "LaTeX errors"),
-        ("Fatal error", "Fatal errors"),
-        ("Undefined control sequence", "Undefined control sequences"),
-        ("Missing", "Missing items"),
-        ("File not found", "File not found errors"),
-        ("Emergency stop", "Emergency stops"),
-    ];
+    if let Some(log) = xelatex_log {
+        for line in log.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('!') {
+                errors.push(format!("LaTeX error: {}", trimmed));
+            }
+        }
 
-    for (pattern, label) in error_patterns {
-        for line in combined.lines() {
-            if line.contains(pattern) {
-                errors.push(format!("{}: {}", label, line.trim()));
+        let error_patterns = vec![
+            ("Fatal error", "Fatal errors"),
+            ("Undefined control sequence", "Undefined control sequences"),
+            ("Emergency stop", "Emergency stops"),
+        ];
+        for (pattern, label) in error_patterns {
+            for line in log.lines() {
+                if line.contains(pattern) {
+                    errors.push(format!("{}: {}", label, line.trim()));
+                }
             }
         }
     }
 
     if errors.is_empty() {
-        // If no specific patterns found, return last few lines that might contain errors
-        let lines: Vec<&str> = combined.lines().collect();
-        if lines.len() > 0 {
-            let last_lines: Vec<&str> = lines.iter().rev().take(10).rev().cloned().collect();
-            format!("Last output lines:\n{}", last_lines.join("\n"))
+        if let Some(log) = xelatex_log {
+            let lines: Vec<&str> = log.lines().collect();
+            if !lines.is_empty() {
+                let last_lines: Vec<&str> = lines.iter().rev().take(30).rev().cloned().collect();
+                format!("Last output lines:\n{}", last_lines.join("\n"))
+            } else {
+                String::new()
+            }
         } else {
             String::new()
         }
     } else {
         errors.join("\n")
     }
-}
-
-/// Write compilation errors to the log file
-fn write_compilation_errors_to_log(
-    log_file_path: &str,
-    stdout: &str,
-    stderr: &str,
-    exit_code: &str,
-    params: &CompileAppParams,
-) -> Result<(), String> {
-    let mut file = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(log_file_path)
-        .map_err(|e| format!("Failed to open log file: {}", e))?;
-
-    writeln!(file, "\n==== COMPILATION FAILED ====")
-        .map_err(|e| format!("Failed to write to log: {}", e))?;
-    writeln!(file, "Exit code: {}", exit_code)
-        .map_err(|e| format!("Failed to write to log: {}", e))?;
-    writeln!(file, "Project ID: {}", params.project_id)
-        .map_err(|e| format!("Failed to write to log: {}", e))?;
-    writeln!(file, "File path: {}", params.file_path)
-        .map_err(|e| format!("Failed to write to log: {}", e))?;
-
-    if !stdout.is_empty() {
-        writeln!(file, "\n--- STDOUT ---").map_err(|e| format!("Failed to write to log: {}", e))?;
-        file.write_all(stdout.as_bytes())
-            .map_err(|e| format!("Failed to write stdout to log: {}", e))?;
-    }
-
-    if !stderr.is_empty() {
-        writeln!(file, "\n--- STDERR ---").map_err(|e| format!("Failed to write to log: {}", e))?;
-        file.write_all(stderr.as_bytes())
-            .map_err(|e| format!("Failed to write stderr to log: {}", e))?;
-    }
-
-    writeln!(file, "\n==== END COMPILATION ERROR ====")
-        .map_err(|e| format!("Failed to write to log: {}", e))?;
-    file.sync_all()
-        .map_err(|e| format!("Failed to sync log file: {}", e))?;
-
-    Ok(())
 }
 
 fn create_consumer_group(params: &CompileAppParams, con: &mut Connection) {
@@ -886,8 +900,8 @@ fn write_end_marker(file: &mut std::fs::File, params: &CompileAppParams) {
  * step 1: download the tex project source code zip package by http from texhub server
  * the url path: /inner-tex/project/download/{project_id}
  * step 2: unzip the tex project to a temp folder
- * step 3: run xelatex command to compile the tex file
- * step 4: write compile log file to redis stream
+ * step 3: run latexmk (xelatex) to compile the tex file
+ * step 4: stream xelatex .log to redis (latexmk log stays server-side only)
  * step 5: upload the compiled pdf file to texhub server by http
  * step 6: zip compile output and upload to /inner-tex/project/upload-full-output
  */
@@ -900,6 +914,8 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
         params.project_id.clone(),
     ]);
     let log_file_path = format!("{}/{}", compile_dir, params.log_file_name);
+    let tex_file_name = tex_filename_from_path(&params.file_path);
+    let xelatex_log_path = xelatex_log_path(&compile_dir, &tex_file_name);
 
     // ensure compile dir
     if let Err(e) = ensure_compile_dir(&compile_dir, params) {
@@ -914,9 +930,8 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
     }
     let params_copy = params.clone();
     let compile_dir_copy = compile_dir.clone();
-    let log_file_path_copy = log_file_path.clone();
-    // clear the log file contents before compilation
-    // check if exists, if not create
+    let end_marker_path_copy = log_file_path.clone();
+    // end marker file only; xelatex log is produced by the compiler
     let _ = fs::write(&log_file_path, "");
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| format!("create runtime failed: {}", e))
@@ -925,13 +940,13 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
         if let Err(e) = rt.block_on(compile_project(
             &params_copy,
             &compile_dir_copy,
-            &log_file_path_copy,
+            &end_marker_path_copy,
         )) {
             error!("compile step failed: {}", e);
         }
     });
-    if let Err(e) = tail_log(params, &log_file_path) {
-        error!("finalize/upload failed: {}", e);
+    if let Err(e) = tail_xelatex_log(params, &xelatex_log_path, &log_file_path) {
+        error!("xelatex log tail failed: {}", e);
     }
     Some(CompileResult::Success)
 }
@@ -982,18 +997,18 @@ fn download_and_unzip(
 async fn compile_project(
     params: &CompileAppParams,
     compile_dir: &str,
-    log_file_path: &str,
+    end_marker_path: &str,
 ) -> Result<(), String> {
     let tex_file_name = tex_filename_from_path(&params.file_path);
-    return run_latexmk_and_log(&tex_file_name, &compile_dir, log_file_path, params).await;
+    return run_latexmk_and_log(&tex_file_name, &compile_dir, end_marker_path, params).await;
 }
 
-fn open_write_end_marker(log_file_path: &str, params: &CompileAppParams) -> Result<(), String> {
+fn open_write_end_marker(end_marker_path: &str, params: &CompileAppParams) -> Result<(), String> {
     // write end marker
     let file: Result<File, Error> = OpenOptions::new()
         .append(true)
         .create(true)
-        .open(&log_file_path);
+        .open(end_marker_path);
     let mut naked_file = file.map_err(|e| format!("open log failed: {}", e))?;
     info!("write end marker...");
     write_end_marker(&mut naked_file, params);
@@ -1051,7 +1066,11 @@ fn do_upload_full_output_to_texhub(params: &CompileAppParams, compile_dir: &str)
     let _ = fs::remove_file(&zip_path);
 }
 
-fn tail_log(params: &CompileAppParams, log_file_path: &str) -> notify::Result<()> {
+fn tail_xelatex_log(
+    params: &CompileAppParams,
+    xelatex_log_path: &str,
+    end_marker_path: &str,
+) -> notify::Result<()> {
     // Create Redis client and connection once, reuse for all log writes
     let redis_url = env::var("REDIS_URL").unwrap();
     let client = match redis::Client::open(redis_url.as_str()) {
@@ -1082,38 +1101,74 @@ fn tail_log(params: &CompileAppParams, log_file_path: &str) -> notify::Result<()
     create_consumer_group(&params, &mut con);
 
     let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
-    // Use recommended_watcher() to automatically select the best implementation
-    // for your platform. The `EventHandler` passed to this constructor can be a
-    // closure, a `std::sync::mpsc::Sender`, a `crossbeam_channel::Sender`, or
-    // another type the trait is implemented for.
     let mut watcher = notify::recommended_watcher(tx)?;
-    // Add a path to be watched. All files and directories at that path and
-    // below will be monitored for changes.
-    watcher.watch(Path::new(log_file_path), RecursiveMode::Recursive)?;
-    let mut contents = fs::read_to_string(&log_file_path).unwrap();
-    let mut pos = contents.len() as u64;
-    // Block forever, printing out events as they come in
+
+    watcher.watch(Path::new(end_marker_path), RecursiveMode::NonRecursive)?;
+
+    let watch_path = Path::new(xelatex_log_path);
+    if watch_path.exists() {
+        watcher.watch(watch_path, RecursiveMode::NonRecursive)?;
+    } else if let Some(parent) = watch_path.parent() {
+        watcher.watch(parent, RecursiveMode::NonRecursive)?;
+    }
+
+    let mut pos = if watch_path.exists() {
+        let initial = fs::read_to_string(xelatex_log_path).unwrap_or_default();
+        if !initial.is_empty() {
+            write_log_to_redis_stream(&initial, params, &mut con);
+        }
+        initial.len() as u64
+    } else {
+        0
+    };
+
+    if end_marker_reached(end_marker_path) {
+        info!("Detected end marker before tail loop, stopping.");
+        drop(watcher);
+        return Ok(());
+    }
+
     for res in rx {
-        match res {
-            Ok(event) => {
-                let mut f = File::open(&log_file_path).unwrap();
-                f.seek(SeekFrom::Start(pos)).unwrap();
-                pos = f.metadata().unwrap().len();
-                contents.clear();
-                let read_result = f.read_to_string(&mut contents);
-                if let Err(e) = read_result {
-                    error!("read log file failed: {}", e);
-                    continue;
-                }
-                write_log_to_redis_stream(&contents, params, &mut con);
-                if contents.contains("====END====") {
-                    info!("Detected end marker in log, stopping tail.");
-                    break;
-                }
+        if watch_path.exists() {
+            push_xelatex_log_delta(xelatex_log_path, &mut pos, params, &mut con);
+        }
+        if end_marker_reached(end_marker_path) {
+            if watch_path.exists() {
+                push_xelatex_log_delta(xelatex_log_path, &mut pos, params, &mut con);
             }
-            Err(e) => error!("watch error: {:?}", e),
+            info!("Detected end marker, stopping xelatex log tail.");
+            break;
+        }
+        if let Err(e) = res {
+            error!("watch error: {:?}", e);
         }
     }
     drop(watcher);
     Ok(())
+}
+
+fn push_xelatex_log_delta(
+    xelatex_log_path: &str,
+    pos: &mut u64,
+    params: &CompileAppParams,
+    con: &mut Connection,
+) {
+    let mut f = match File::open(xelatex_log_path) {
+        Ok(f) => f,
+        Err(e) => {
+            error!("read xelatex log failed: {}", e);
+            return;
+        }
+    };
+    if f.seek(SeekFrom::Start(*pos)).is_err() {
+        return;
+    }
+    let mut contents = String::new();
+    if f.read_to_string(&mut contents).is_err() {
+        return;
+    }
+    *pos = f.metadata().map(|m| m.len()).unwrap_or(*pos);
+    if !contents.is_empty() {
+        write_log_to_redis_stream(&contents, params, con);
+    }
 }
