@@ -4,8 +4,6 @@ use crate::{
     model::project::compile_app_params::CompileAppParams, rest::client::cv_client::http_client,
 };
 use log::{error, info, warn};
-use notify::RecursiveMode;
-use notify::{Event, Watcher};
 use redis::{self, Connection};
 use rust_wheel::{
     common::util::rd_file_util::join_paths,
@@ -14,14 +12,14 @@ use rust_wheel::{
 };
 use serde_json::json;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::sync::mpsc;
 use std::{
     env,
     fs::{self, File, OpenOptions},
     io::Error,
     path::Path,
     process::{Command, Stdio},
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::task;
 use zip::read::ZipArchive;
@@ -578,8 +576,12 @@ pub fn del_redis_stream(params: &CompileAppParams, con: &mut Connection) {
  */
 fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams, con: &mut Connection) {
     let stream_key = format!("texhub:compile:log:{}:{}", params.project_id, params.qid);
-    // Split content into lines and push each as an entry into the stream.
-    // Each entry contains fields: msg, file, project_id, proj_created_time
+    let line_count = log_content.lines().count();
+    if line_count == 0 {
+        return;
+    }
+
+    let mut pushed = 0u32;
     for line in log_content.lines() {
         let res: redis::RedisResult<String> = redis::cmd("XADD")
             .arg(&stream_key)
@@ -591,13 +593,32 @@ fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams, con: 
             .arg(line)
             .query(con);
 
-        if let Err(e) = res {
-            error!(
-                "Failed to XADD compile log to redis stream {}: {}. Line: {}",
-                stream_key, e, line
-            );
+        match res {
+            Ok(entry_id) => {
+                pushed += 1;
+                if pushed == 1 {
+                    info!(
+                        "Redis XADD started: stream={}, project_id={}, qid={}, first_entry_id={}",
+                        stream_key, params.project_id, params.qid, entry_id
+                    );
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Failed to XADD compile log to redis stream {}: {}. Line: {}",
+                    stream_key, e, line
+                );
+            }
         }
     }
+
+    info!(
+        "Redis XADD batch done: stream={}, lines_pushed={}/{}, bytes={}",
+        stream_key,
+        pushed,
+        line_count,
+        log_content.len()
+    );
 }
 
 fn build_multipart_upload_body(
@@ -1010,7 +1031,10 @@ fn open_write_end_marker(end_marker_path: &str, params: &CompileAppParams) -> Re
         .create(true)
         .open(end_marker_path);
     let mut naked_file = file.map_err(|e| format!("open log failed: {}", e))?;
-    info!("write end marker...");
+    info!(
+        "Writing compile end marker: path={}, project_id={}, qid={}",
+        end_marker_path, params.project_id, params.qid
+    );
     write_end_marker(&mut naked_file, params);
     drop(naked_file);
     return Ok(());
@@ -1070,80 +1094,95 @@ fn tail_xelatex_log(
     params: &CompileAppParams,
     xelatex_log_path: &str,
     end_marker_path: &str,
-) -> notify::Result<()> {
-    // Create Redis client and connection once, reuse for all log writes
+) -> Result<(), String> {
     let redis_url = env::var("REDIS_URL").unwrap();
-    let client = match redis::Client::open(redis_url.as_str()) {
-        Ok(c) => c,
-        Err(e) => {
-            error!(
-                "Failed to create redis client for url {}: {}. Logging locally.",
-                redis_url, e
-            );
-            return Err(notify::Error::generic(&format!(
-                "Redis client creation failed: {}",
-                e
-            )));
-        }
-    };
+    let client = redis::Client::open(redis_url.as_str()).map_err(|e| {
+        error!(
+            "Failed to create redis client for url {}: {}. Logging locally.",
+            redis_url, e
+        );
+        format!("Redis client creation failed: {}", e)
+    })?;
 
-    let mut con = match client.get_connection() {
-        Ok(c) => c,
-        Err(e) => {
-            error!("Failed to get redis connection: {}. Logging locally.", e);
-            return Err(notify::Error::generic(&format!(
-                "Redis connection failed: {}",
-                e
-            )));
-        }
-    };
-    del_redis_stream(&params, &mut con);
-    create_consumer_group(&params, &mut con);
+    let mut con = client.get_connection().map_err(|e| {
+        error!("Failed to get redis connection: {}. Logging locally.", e);
+        format!("Redis connection failed: {}", e)
+    })?;
 
-    let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
-    let mut watcher = notify::recommended_watcher(tx)?;
+    del_redis_stream(params, &mut con);
+    create_consumer_group(params, &mut con);
 
-    watcher.watch(Path::new(end_marker_path), RecursiveMode::NonRecursive)?;
+    info!(
+        "Starting log push tail: project_id={}, qid={}, stream=texhub:compile:log:{}:{}, xelatex_log={}, end_marker={}",
+        params.project_id,
+        params.qid,
+        params.project_id,
+        params.qid,
+        xelatex_log_path,
+        end_marker_path
+    );
 
-    let watch_path = Path::new(xelatex_log_path);
-    if watch_path.exists() {
-        watcher.watch(watch_path, RecursiveMode::NonRecursive)?;
-    } else if let Some(parent) = watch_path.parent() {
-        watcher.watch(parent, RecursiveMode::NonRecursive)?;
-    }
+    let mut pos: u64 = 0;
+    let mut log_file_seen = false;
+    let mut push_rounds: u32 = 0;
+    let poll_interval = Duration::from_millis(200);
+    let max_wait = Duration::from_secs(3600);
+    let started = std::time::Instant::now();
 
-    let mut pos = if watch_path.exists() {
-        let initial = fs::read_to_string(xelatex_log_path).unwrap_or_default();
-        if !initial.is_empty() {
-            write_log_to_redis_stream(&initial, params, &mut con);
-        }
-        initial.len() as u64
-    } else {
-        0
-    };
-
-    if end_marker_reached(end_marker_path) {
-        info!("Detected end marker before tail loop, stopping.");
-        drop(watcher);
-        return Ok(());
-    }
-
-    for res in rx {
-        if watch_path.exists() {
-            push_xelatex_log_delta(xelatex_log_path, &mut pos, params, &mut con);
-        }
-        if end_marker_reached(end_marker_path) {
-            if watch_path.exists() {
-                push_xelatex_log_delta(xelatex_log_path, &mut pos, params, &mut con);
+    loop {
+        if Path::new(xelatex_log_path).exists() {
+            if !log_file_seen {
+                log_file_seen = true;
+                let file_size = fs::metadata(xelatex_log_path).map(|m| m.len()).unwrap_or(0);
+                info!(
+                    "xelatex log file appeared: path={}, initial_size={} bytes",
+                    xelatex_log_path, file_size
+                );
             }
-            info!("Detected end marker, stopping xelatex log tail.");
+            let prev_pos = pos;
+            push_xelatex_log_delta(xelatex_log_path, &mut pos, params, &mut con);
+            if pos > prev_pos {
+                push_rounds += 1;
+            }
+        }
+
+        if end_marker_reached(end_marker_path) {
+            if Path::new(xelatex_log_path).exists() {
+                let prev_pos = pos;
+                push_xelatex_log_delta(xelatex_log_path, &mut pos, params, &mut con);
+                if pos > prev_pos {
+                    push_rounds += 1;
+                }
+            }
+            if !log_file_seen {
+                warn!(
+                    "End marker reached but xelatex log never appeared: path={}",
+                    xelatex_log_path
+                );
+            }
+            info!(
+                "Log push tail finished: project_id={}, qid={}, bytes_sent={}, push_rounds={}, elapsed={:?}, log_seen={}",
+                params.project_id,
+                params.qid,
+                pos,
+                push_rounds,
+                started.elapsed(),
+                log_file_seen
+            );
             break;
         }
-        if let Err(e) = res {
-            error!("watch error: {:?}", e);
+
+        if started.elapsed() > max_wait {
+            warn!(
+                "xelatex log tail timed out after {:?}: path={}, bytes_sent={}, push_rounds={}, log_seen={}",
+                max_wait, xelatex_log_path, pos, push_rounds, log_file_seen
+            );
+            break;
         }
+
+        thread::sleep(poll_interval);
     }
-    drop(watcher);
+
     Ok(())
 }
 
@@ -1153,22 +1192,39 @@ fn push_xelatex_log_delta(
     params: &CompileAppParams,
     con: &mut Connection,
 ) {
+    let start_pos = *pos;
     let mut f = match File::open(xelatex_log_path) {
         Ok(f) => f,
         Err(e) => {
-            error!("read xelatex log failed: {}", e);
+            error!("read xelatex log failed: path={}, error={}", xelatex_log_path, e);
             return;
         }
     };
     if f.seek(SeekFrom::Start(*pos)).is_err() {
+        warn!(
+            "xelatex log seek failed: path={}, offset={}",
+            xelatex_log_path, start_pos
+        );
         return;
     }
     let mut contents = String::new();
     if f.read_to_string(&mut contents).is_err() {
+        warn!(
+            "xelatex log read failed: path={}, offset={}",
+            xelatex_log_path, start_pos
+        );
         return;
     }
     *pos = f.metadata().map(|m| m.len()).unwrap_or(*pos);
     if !contents.is_empty() {
+        info!(
+            "xelatex log delta: path={}, offset {} -> {} ({} bytes, {} lines)",
+            xelatex_log_path,
+            start_pos,
+            *pos,
+            contents.len(),
+            contents.lines().count()
+        );
         write_log_to_redis_stream(&contents, params, con);
     }
 }
