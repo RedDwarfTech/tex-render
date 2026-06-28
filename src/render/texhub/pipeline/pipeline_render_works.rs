@@ -159,9 +159,16 @@ fn truncate_for_log(content: &str, max_bytes: usize) -> String {
     }
 }
 
-fn format_http_send_error(method: &str, url: &str, request_body: &str, err: &reqwest::Error) -> String {
+fn format_http_send_error(
+    method: &str,
+    url: &str,
+    request_body: &str,
+    err: &reqwest::Error,
+    timeout_secs: u64,
+) -> String {
+    let connect_timeout_secs = timeout_secs.min(10);
     let mut detail = format!(
-        "HTTP request failed\n  method: {method}\n  url: {url}\n  request_headers: Content-Type=application/json\n  request_body: {request_body}\n  error: {err:#}\n  is_connect: {}\n  is_timeout: {}\n  is_request: {}\n  is_body: {}\n  is_decode: {}",
+        "HTTP request failed\n  method: {method}\n  url: {url}\n  request_headers: Content-Type=application/json\n  request_body: {request_body}\n  client_timeout: {timeout_secs}s\n  connect_timeout: {connect_timeout_secs}s\n  error: {err:#}\n  is_connect: {}\n  is_timeout: {}\n  is_request: {}\n  is_body: {}\n  is_decode: {}",
         err.is_connect(),
         err.is_timeout(),
         err.is_request(),
@@ -177,7 +184,9 @@ fn format_http_send_error(method: &str, url: &str, request_body: &str, err: &req
         );
     }
     if err.is_timeout() {
-        detail.push_str("\n  hint: request timed out (client timeout=15s, connect_timeout=10s)");
+        detail.push_str(&format!(
+            "\n  hint: request timed out (client_timeout={timeout_secs}s, connect_timeout={connect_timeout_secs}s)"
+        ));
     }
     detail
 }
@@ -203,6 +212,7 @@ fn format_http_error_response(
  * Returns path to the downloaded zip file.
  */
 async fn download_tex_project_zip(project_id: &str, temp_dir: &str) -> Result<String, String> {
+    const DOWNLOAD_TIMEOUT_SECS: u64 = 30;
     let texhub_api_url = get_app_config("cv.texhub_api_url");
     let url = format!("{}/inner-tex/project/download", texhub_api_url);
     let zip_path = format!("{}/{}.zip", temp_dir, project_id);
@@ -211,11 +221,11 @@ async fn download_tex_project_zip(project_id: &str, temp_dir: &str) -> Result<St
     let request_body = body.to_string();
 
     info!(
-        "Downloading tex project zip: url={}, project_id={}, temp_dir={}, request_body={}",
-        url, project_id, temp_dir, request_body
+        "Downloading tex project zip: url={}, project_id={}, temp_dir={}, timeout={}s, request_body={}",
+        url, project_id, temp_dir, DOWNLOAD_TIMEOUT_SECS, request_body
     );
 
-    match http_client()
+    match http_client(Some(DOWNLOAD_TIMEOUT_SECS))
         .put(&url)
         .header("Content-Type", "application/json")
         .body(request_body.clone())
@@ -272,7 +282,13 @@ async fn download_tex_project_zip(project_id: &str, temp_dir: &str) -> Result<St
             }
         }
         Err(e) => {
-            let detail = format_http_send_error("PUT", &url, &request_body, &e);
+            let detail = format_http_send_error(
+                "PUT",
+                &url,
+                &request_body,
+                &e,
+                DOWNLOAD_TIMEOUT_SECS,
+            );
             error!("{}", detail);
             Err(detail)
         }

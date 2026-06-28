@@ -11,7 +11,7 @@ pub async fn get_one_user_config(uid: i64, key: &str) -> Option<TexUserConfig> {
     );
     let url = format!("{}{}", get_app_config("cv.texhub_api_url"), url_path);
     // Send request and bail out early on error to keep nesting shallow.
-    let resp = match http_client().get(url.clone()).send().await {
+    let resp = match http_client(None).get(url.clone()).send().await {
         Ok(r) => r,
         Err(e) => {
             error!("get user conf error: {}, url: {}", e, url);

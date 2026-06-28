@@ -11,7 +11,7 @@ pub async fn update_expired_job() {
     let url = format!("{}{}", get_app_config("cv.texhub_api_url"), url_path);
 
     let request_body = "{\"expire_time:\": 1}";
-    let response = match http_client()
+    let response = match http_client(None)
         .post(url.clone())
         .header("Content-Type", "application/json")
         .body(request_body.to_string())

@@ -20,19 +20,36 @@ use rust_wheel::{
     model::response::api_response::ApiResponse, texhub::proj::compile_result::CompileResult
 };
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
-pub fn http_client() -> &'static reqwest::Client {
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .pool_idle_timeout(None)
-            .pool_max_idle_per_host(0)
-            .build()
-            .expect("Failed to build reqwest client")
-    })
+const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 3;
+
+static HTTP_CLIENTS: OnceLock<Mutex<HashMap<u64, reqwest::Client>>> = OnceLock::new();
+
+fn build_http_client(timeout_secs: u64) -> reqwest::Client {
+    let connect_timeout_secs = timeout_secs.min(10);
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .connect_timeout(Duration::from_secs(connect_timeout_secs))
+        .pool_idle_timeout(None)
+        .pool_max_idle_per_host(0)
+        .build()
+        .expect("Failed to build reqwest client")
+}
+
+/// Returns a cached reqwest client. `timeout_secs`: request timeout in seconds; default 3s.
+pub fn http_client(timeout_secs: Option<u64>) -> reqwest::Client {
+    let timeout_secs = timeout_secs.unwrap_or(DEFAULT_HTTP_TIMEOUT_SECS);
+    let clients = HTTP_CLIENTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = clients
+        .lock()
+        .expect("http client cache lock poisoned");
+    guard
+        .entry(timeout_secs)
+        .or_insert_with(|| build_http_client(timeout_secs))
+        .clone()
 }
 
 pub fn http_client_sync() -> &'static reqwest::blocking::Client {
@@ -194,7 +211,7 @@ pub async fn update_queue_status(
             CompileResult::Failure as i32
         },
     };
-    let response = http_client()
+    let response = http_client(None)
         .put(&url)
         .headers(construct_headers())
         .body(serde_json::to_string(&req_params).unwrap())
