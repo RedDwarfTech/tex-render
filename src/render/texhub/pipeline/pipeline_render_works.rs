@@ -128,6 +128,75 @@ fn run_xelatex_in_dir(tex_file: &str, dir: &str) -> Result<std::process::Output,
         .output()
 }
 
+fn format_http_headers(headers: &reqwest::header::HeaderMap) -> String {
+    if headers.is_empty() {
+        return "(none)".to_string();
+    }
+    headers
+        .iter()
+        .map(|(name, value)| {
+            format!(
+                "{}={}",
+                name,
+                value.to_str().unwrap_or("<non-utf8>")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn truncate_for_log(content: &str, max_bytes: usize) -> String {
+    if content.len() <= max_bytes {
+        content.to_string()
+    } else if max_bytes == 0 {
+        format!("(truncated, total {} bytes)", content.len())
+    } else {
+        format!(
+            "{}...(truncated, total {} bytes)",
+            &content[..max_bytes],
+            content.len()
+        )
+    }
+}
+
+fn format_http_send_error(method: &str, url: &str, request_body: &str, err: &reqwest::Error) -> String {
+    let mut detail = format!(
+        "HTTP request failed\n  method: {method}\n  url: {url}\n  request_headers: Content-Type=application/json\n  request_body: {request_body}\n  error: {err:#}\n  is_connect: {}\n  is_timeout: {}\n  is_request: {}\n  is_body: {}\n  is_decode: {}",
+        err.is_connect(),
+        err.is_timeout(),
+        err.is_request(),
+        err.is_body(),
+        err.is_decode(),
+    );
+    if let Some(status) = err.status() {
+        detail.push_str(&format!("\n  response_status: {status}"));
+    }
+    if err.is_connect() {
+        detail.push_str(
+            "\n  hint: connection failed — check DNS, target service, port, and network policy",
+        );
+    }
+    if err.is_timeout() {
+        detail.push_str("\n  hint: request timed out (client timeout=15s, connect_timeout=10s)");
+    }
+    detail
+}
+
+fn format_http_error_response(
+    method: &str,
+    url: &str,
+    request_body: &str,
+    status: reqwest::StatusCode,
+    resp_headers: &reqwest::header::HeaderMap,
+    resp_body: &str,
+) -> String {
+    format!(
+        "HTTP download failed\n  method: {method}\n  url: {url}\n  request_headers: Content-Type=application/json\n  request_body: {request_body}\n  response_status: {status}\n  response_headers: {}\n  response_body: {}",
+        format_http_headers(resp_headers),
+        truncate_for_log(resp_body, 2000),
+    )
+}
+
 /**
  * Step 1: Download tex project source code zip package from texhub server.
  * Downloads from URL: /inner-tex/project/download/{project_id}
@@ -139,28 +208,74 @@ async fn download_tex_project_zip(project_id: &str, temp_dir: &str) -> Result<St
     let zip_path = format!("{}/{}.zip", temp_dir, project_id);
 
     let body = json!({"project_id": project_id, "version": "latest"});
+    let request_body = body.to_string();
 
-    match http_client().put(&url).json(&body).send().await {
+    info!(
+        "Downloading tex project zip: url={}, project_id={}, temp_dir={}, request_body={}",
+        url, project_id, temp_dir, request_body
+    );
+
+    match http_client()
+        .put(&url)
+        .header("Content-Type", "application/json")
+        .body(request_body.clone())
+        .send()
+        .await
+    {
         Ok(resp) => {
-            if !resp.status().is_success() {
-                return Err(format!(
-                    "Download failed with status: {}, url: {}",
-                    resp.status(),
-                    url
-                ));
+            let status = resp.status();
+            let resp_headers = resp.headers().clone();
+            if !status.is_success() {
+                let resp_body = resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|e| format!("<failed to read response body: {e:#}>"));
+                let detail = format_http_error_response(
+                    "PUT",
+                    &url,
+                    &request_body,
+                    status,
+                    &resp_headers,
+                    &resp_body,
+                );
+                error!("{}", detail);
+                return Err(detail);
             }
             match resp.bytes().await {
-                Ok(bytes) => match fs::write(&zip_path, bytes) {
-                    Ok(_) => {
-                        info!("Downloaded tex project zip to: {}", zip_path);
-                        Ok(zip_path)
+                Ok(bytes) => {
+                    let byte_len = bytes.len();
+                    match fs::write(&zip_path, bytes) {
+                        Ok(_) => {
+                            info!(
+                                "Downloaded tex project zip to: {} ({} bytes)",
+                                zip_path, byte_len
+                            );
+                            Ok(zip_path)
+                        }
+                        Err(e) => {
+                            let detail = format!(
+                                "Failed to write downloaded zip file\n  url: {url}\n  zip_path: {zip_path}\n  bytes_received: {byte_len}\n  error: {e:#}"
+                            );
+                            error!("{}", detail);
+                            Err(detail)
+                        }
                     }
-                    Err(e) => Err(format!("Failed to write zip file: {}", e)),
-                },
-                Err(e) => Err(format!("Failed to read response body: {}", e)),
+                }
+                Err(e) => {
+                    let detail = format!(
+                        "Failed to read download response body\n  url: {url}\n  response_status: {status}\n  response_headers: {}\n  error: {e:#}",
+                        format_http_headers(&resp_headers),
+                    );
+                    error!("{}", detail);
+                    Err(detail)
+                }
             }
         }
-        Err(e) => Err(format!("HTTP request failed: {}", e)),
+        Err(e) => {
+            let detail = format_http_send_error("PUT", &url, &request_body, &e);
+            error!("{}", detail);
+            Err(detail)
+        }
     }
 }
 
@@ -946,7 +1061,10 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
 
     // download & unzip
     if let Err(e) = download_and_unzip(params, &compile_dir, &time_split_output_proj_base) {
-        error!("download/unzip failed: {}", e);
+        error!(
+            "download/unzip failed: project_id={}, qid={}, compile_dir={}, file_path={}, detail:\n{}",
+            params.project_id, params.qid, compile_dir, params.file_path, e
+        );
         return Some(CompileResult::Failure);
     }
     let params_copy = params.clone();
@@ -987,27 +1105,53 @@ fn download_and_unzip(
     compile_dir: &str,
     unzip_dir: &str,
 ) -> Result<(), String> {
-    // temp dir for download
     let temp_dir = format!("/tmp/texhub_downloads_{}", params.project_id);
-    fs::create_dir_all(&temp_dir).map_err(|e| format!("create temp dir failed: {}", e))?;
+    info!(
+        "download_and_unzip start: project_id={}, qid={}, compile_dir={}, unzip_dir={}, temp_dir={}",
+        params.project_id, params.qid, compile_dir, unzip_dir, temp_dir
+    );
+
+    if let Err(e) = fs::create_dir_all(&temp_dir) {
+        let detail = format!(
+            "create temp dir failed\n  temp_dir: {temp_dir}\n  project_id: {}\n  error: {e:#}",
+            params.project_id
+        );
+        error!("{}", detail);
+        return Err(detail);
+    }
 
     let rt = tokio::runtime::Runtime::new().map_err(|e| format!("create runtime failed: {}", e))?;
-    let zip_path = rt.block_on(download_tex_project_zip(&params.project_id, &temp_dir))?;
+    let zip_path = match rt.block_on(download_tex_project_zip(&params.project_id, &temp_dir)) {
+        Ok(path) => path,
+        Err(e) => {
+            error!(
+                "download_tex_project_zip failed: project_id={}, qid={}, temp_dir={}, detail:\n{}",
+                params.project_id, params.qid, temp_dir, e
+            );
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(format!("download failed: {}", e));
+        }
+    };
 
-    // unzip into compile_dir
     info!(
-        "About to unzip file: zip_path={}, unzip_dir={}",
-        zip_path, unzip_dir
+        "About to unzip file: zip_path={}, unzip_dir={}, project_id={}",
+        zip_path, unzip_dir, params.project_id
     );
     match unzip_project(&zip_path, &unzip_dir) {
         Ok(_) => {
-            info!("Unzip completed successfully, cleaning up temp files");
+            info!(
+                "Unzip completed successfully: project_id={}, zip_path={}, unzip_dir={}",
+                params.project_id, zip_path, unzip_dir
+            );
             let _ = fs::remove_file(&zip_path);
             let _ = fs::remove_dir_all(&temp_dir);
             Ok(())
         }
         Err(e) => {
-            error!("Unzip failed: {}, cleaning up temp files", e);
+            error!(
+                "Unzip failed: project_id={}, qid={}, zip_path={}, unzip_dir={}, detail:\n{}",
+                params.project_id, params.qid, zip_path, unzip_dir, e
+            );
             let _ = fs::remove_file(&zip_path);
             let _ = fs::remove_dir_all(&temp_dir);
             Err(format!("unzip failed: {}", e))
