@@ -2,15 +2,53 @@ use super::{
     compile_task_consumer::consume_redis_stream,
     texhub::compile::check_expire_compile_task::check_expired_queue_task,
 };
-use log::{error, info};
+use log::{error, info, LevelFilter};
+use log4rs::{
+    append::console::ConsoleAppender,
+    append::file::FileAppender,
+    config::{Appender, Config, Logger, Root},
+};
 use tokio::spawn;
-use tokio::task::spawn_blocking;
 use tokio_cron_scheduler::{Job, JobScheduler};
+
+use crate::util::request_context::RequestIdEncoder;
+
+const LOG_PATTERN: &str = "{d(%+)(utc)} [{f}:{L}] {h({l})} {M}:{m}{n}";
 
 pub fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all("log")?;
-    log4rs::init_file("log4rs.yaml", Default::default())?;
-    info!("log4rs initialized successfully");
+
+    let stdout = ConsoleAppender::builder()
+        .encoder(Box::new(RequestIdEncoder::new(LOG_PATTERN)))
+        .build();
+
+    let render_file_logger = FileAppender::builder()
+        .encoder(Box::new(RequestIdEncoder::new(LOG_PATTERN)))
+        .build("log/my.log")?;
+
+    let requests = FileAppender::builder()
+        .encoder(Box::new(RequestIdEncoder::new("{d} - {m}{n}")))
+        .build("log/requests.log")?;
+
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .appender(
+            Appender::builder().build("render_file_logger", Box::new(render_file_logger)),
+        )
+        .appender(Appender::builder().build("requests", Box::new(requests)))
+        .logger(Logger::builder().build("app::backend::db", LevelFilter::Info))
+        .logger(
+            Logger::builder()
+                .appender("requests")
+                .additive(false)
+                .build("app::requests", LevelFilter::Info),
+        )
+        .build(Root::builder().appender("stdout").appender("render_file_logger").build(
+            LevelFilter::Info,
+        ))?;
+
+    log4rs::init_config(config)?;
+    info!("logging initialized with request-id context");
     Ok(())
 }
 

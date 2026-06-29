@@ -1,8 +1,8 @@
 use actix_web::App;
 use actix_web::HttpServer;
-use actix_web_lab::__reexports::tracing::info;
+use common::request_id_middleware::RequestIdMiddleware;
 use controller::tex::tex_controller;
-use log::error;
+use log::{error, info};
 use task::app_init::initial_task;
 use task::compile_task_consumer::consume_redis_stream;
 
@@ -38,6 +38,7 @@ async fn main() {
 async fn actix_main() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
+            .wrap(RequestIdMiddleware)
             .configure(tex_controller::config)
             .configure(health_controller::config)
             .configure(proj_controller::config)

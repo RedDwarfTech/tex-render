@@ -917,6 +917,7 @@ dependencies = [
  "actix-rt",
  "actix-web",
  "actix-web-lab",
+ "anyhow",
  "chrono",
  "config",
  "futures",

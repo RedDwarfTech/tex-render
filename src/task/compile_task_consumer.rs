@@ -5,6 +5,7 @@ use crate::{
     controller::tex::tex_controller::compile_tex_from_mq,
     model::project::compile_app_params::{generate_x_request_id, CompileAppParams},
     rest::client::cv_client::update_queue_status,
+    util::request_context::run_with_request_id,
 };
 use log::{error, info, warn};
 use redis::streams::{StreamId, StreamKey, StreamReadOptions, StreamReadReply};
@@ -94,28 +95,31 @@ async fn handle_proj_compile_record(
     sk: &StreamKey,
 ) {
     let param: CompileAppParams = do_task(&stream_id);
-    info!(
-        "handle compile task, x-request-id: {}, qid: {}, project_id: {}",
-        param.x_request_id, param.qid, param.project_id
-    );
-    let redis_url = env::var("REDIS_URL").unwrap();
-    let client = redis::Client::open(redis_url.as_str()).unwrap();
-    let mut con = client.get_connection().unwrap();
-    del_redis_stream(&param, &mut con);
-    let u_result = update_queue_status(1, &param.qid, Some(-1), &param.x_request_id).await;
-    if !u_result {
-        // do not return when update failed
-        // it will make the redis stream retry and go into a dead loop
-        error!("update status failed: {},sk:{:?}", u_result, stream_id);
-    }
-    let del_result = delete_stream_element(sk.key.as_str(), stream_id.id.clone());
-    if let Err(e) = del_result {
-        error!("delete stream failed: {}, stream id: {:?}", e, &stream_id);
+    run_with_request_id(param.x_request_id.clone(), || async move {
+        info!(
+            "handle compile task, qid: {}, project_id: {}",
+            param.qid, param.project_id
+        );
+        let redis_url = env::var("REDIS_URL").unwrap();
+        let client = redis::Client::open(redis_url.as_str()).unwrap();
+        let mut con = client.get_connection().unwrap();
+        del_redis_stream(&param, &mut con);
+        let u_result = update_queue_status(1, &param.qid, Some(-1), &param.x_request_id).await;
+        if !u_result {
+            // do not return when update failed
+            // it will make the redis stream retry and go into a dead loop
+            error!("update status failed: {},sk:{:?}", u_result, stream_id);
+        }
+        let del_result = delete_stream_element(sk.key.as_str(), stream_id.id.clone());
+        if let Err(e) = del_result {
+            error!("delete stream failed: {}, stream id: {:?}", e, &stream_id);
+            rl.unlock(&lock);
+            return;
+        }
         rl.unlock(&lock);
-        return;
-    }
-    rl.unlock(&lock);
-    compile_tex_from_mq(param).await;
+        compile_tex_from_mq(param).await;
+    })
+    .await
 }
 
 fn do_task(stream_id: &StreamId) -> CompileAppParams {

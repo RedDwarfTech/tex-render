@@ -1,13 +1,9 @@
 use crate::model::project::compile_app_params::CompileAppParams;
 use crate::model::project::tex_file_compile_status::TeXFileCompileStatus;
-use crate::model::user::tex_user_config::TexUserConfig;
-use crate::render::render_worker::{
-    render_texhub_project, render_texhub_project_mq, render_texhub_project_sse,
-};
-use crate::render::texhub::pipeline::pipeline_nfs_render_works::render_texhub_project_pipeline_nfs;
+use crate::render::render_worker::{render_texhub_project, render_texhub_project_sse};
 use crate::render::texhub::pipeline::pipeline_render_works::render_texhub_project_pipeline;
 use crate::rest::client::cv_client::{update_queue_status, update_queue_status_sync};
-use crate::rest::user::config::config_fetcher::get_one_user_config;
+use crate::util::request_context::{run_with_request_id, with_request_id};
 use actix_web::http::header::{CacheControl, CacheDirective};
 use actix_web::{web, HttpResponse, Responder};
 use log::{error, warn};
@@ -18,35 +14,47 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::{sync::mpsc::UnboundedReceiver, task};
 
 pub async fn compile_tex(params: web::Json<CompileAppParams>) -> impl Responder {
-    let resp = render_texhub_project(&params).await;
-    let res = ApiResponse {
-        result: resp,
-        ..Default::default()
-    };
-    HttpResponse::Ok().json(res)
+    run_with_request_id(params.x_request_id.clone(), || async {
+        let resp = render_texhub_project(&params).await;
+        let res = ApiResponse {
+            result: resp,
+            ..Default::default()
+        };
+        HttpResponse::Ok().json(res)
+    })
+    .await
 }
 
 pub async fn compile_tex_sse(params: web::Query<CompileAppParams>) -> HttpResponse {
+    let params = params.into_inner();
+    let x_request_id = params.x_request_id.clone();
     let (tx, rx): (UnboundedSender<String>, UnboundedReceiver<String>) =
         tokio::sync::mpsc::unbounded_channel();
     task::spawn(async move {
-        let output = render_texhub_project_sse(&params, tx).await;
-        if let Err(re) = output {
-            error!("Failed to compile, {}", re);
-        }
+        run_with_request_id(x_request_id, || async move {
+            let output = render_texhub_project_sse(&params, tx).await;
+            if let Err(re) = output {
+                error!("Failed to compile, {}", re);
+            }
+        })
+        .await
     });
-    let response = HttpResponse::Ok()
+    HttpResponse::Ok()
         .insert_header(CacheControl(vec![CacheDirective::NoCache]))
         .content_type("text/event-stream")
-        .streaming(SseStream { receiver: Some(rx) });
-    response
+        .streaming(SseStream {
+            receiver: Some(rx),
+        })
 }
 
 pub async fn compile_tex_from_mq(params: CompileAppParams) {
+    let x_request_id = params.x_request_id.clone();
     task::spawn_blocking(move || {
-        let compile_result = render_texhub_project_pipeline(&params);
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(update_queue_compile_result(params, compile_result));
+        with_request_id(&x_request_id, || {
+            let compile_result = render_texhub_project_pipeline(&params);
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(update_queue_compile_result(params, compile_result));
+        });
     });
 }
 

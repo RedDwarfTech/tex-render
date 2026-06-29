@@ -1,7 +1,9 @@
 use crate::controller::tex::tex_controller::update_queue_compile_result_sync;
 use crate::rest::client::cv_client::{construct_headers, http_client_sync, http_client_sync_large_upload};
 use crate::{
-    model::project::compile_app_params::CompileAppParams, rest::client::cv_client::http_client,
+    model::project::compile_app_params::CompileAppParams,
+    rest::client::cv_client::http_client,
+    util::request_context::with_request_id,
 };
 use log::{error, info, warn};
 use redis::{self, Connection};
@@ -1099,19 +1101,22 @@ pub fn render_texhub_project_pipeline(params: &CompileAppParams) -> Option<Compi
     let params_copy = params.clone();
     let compile_dir_copy = compile_dir.clone();
     let end_marker_path_copy = log_file_path.clone();
+    let x_request_id = params.x_request_id.clone();
     // end marker file only; xelatex log is produced by the compiler
     let _ = fs::write(&log_file_path, "");
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| format!("create runtime failed: {}", e))
         .unwrap();
     task::spawn_blocking(move || {
-        if let Err(e) = rt.block_on(compile_project(
-            &params_copy,
-            &compile_dir_copy,
-            &end_marker_path_copy,
-        )) {
-            error!("compile step failed: {}", e);
-        }
+        with_request_id(&x_request_id, || {
+            if let Err(e) = rt.block_on(compile_project(
+                &params_copy,
+                &compile_dir_copy,
+                &end_marker_path_copy,
+            )) {
+                error!("compile step failed: {}", e);
+            }
+        });
     });
     if let Err(e) = tail_xelatex_log(params, &xelatex_log_path, &log_file_path) {
         error!("xelatex log tail failed: {}", e);
