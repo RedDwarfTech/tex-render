@@ -1,5 +1,5 @@
 use crate::controller::tex::tex_controller::update_queue_compile_result_sync;
-use crate::rest::client::cv_client::{http_client_sync, http_client_sync_large_upload};
+use crate::rest::client::cv_client::{construct_headers, http_client_sync, http_client_sync_large_upload};
 use crate::{
     model::project::compile_app_params::CompileAppParams, rest::client::cv_client::http_client,
 };
@@ -211,7 +211,11 @@ fn format_http_error_response(
  * Downloads from URL: /inner-tex/project/download/{project_id}
  * Returns path to the downloaded zip file.
  */
-async fn download_tex_project_zip(project_id: &str, temp_dir: &str) -> Result<String, String> {
+async fn download_tex_project_zip(
+    project_id: &str,
+    temp_dir: &str,
+    x_request_id: &str,
+) -> Result<String, String> {
     const DOWNLOAD_TIMEOUT_SECS: u64 = 30;
     let texhub_api_url = get_app_config("cv.texhub_api_url");
     let url = format!("{}/inner-tex/project/download", texhub_api_url);
@@ -221,13 +225,13 @@ async fn download_tex_project_zip(project_id: &str, temp_dir: &str) -> Result<St
     let request_body = body.to_string();
 
     info!(
-        "Downloading tex project zip: url={}, project_id={}, temp_dir={}, timeout={}s, request_body={}",
-        url, project_id, temp_dir, DOWNLOAD_TIMEOUT_SECS, request_body
+        "Downloading tex project zip: url={}, project_id={}, temp_dir={}, timeout={}s, x-request-id={}, request_body={}",
+        url, project_id, temp_dir, DOWNLOAD_TIMEOUT_SECS, x_request_id, request_body
     );
 
     match http_client(Some(DOWNLOAD_TIMEOUT_SECS))
         .put(&url)
-        .header("Content-Type", "application/json")
+        .headers(construct_headers(Some(x_request_id)))
         .body(request_body.clone())
         .send()
         .await
@@ -792,13 +796,15 @@ fn send_multipart_upload(
     body: Vec<u8>,
     content_type: String,
     upload_label: &str,
+    x_request_id: &str,
 ) -> Result<(), String> {
     info!(
-        "Uploading {} to texhub at URL: {} (multipart manual)",
-        upload_label, upload_url
+        "Uploading {} to texhub at URL: {} (multipart manual), x-request-id={}",
+        upload_label, upload_url, x_request_id
     );
     match http_client_sync()
         .post(upload_url)
+        .headers(construct_headers(Some(x_request_id)))
         .header("Content-Type", content_type)
         .body(body)
         .send()
@@ -887,13 +893,14 @@ fn send_multipart_upload_from_file(
     multipart_path: &str,
     content_type: String,
     upload_label: &str,
+    x_request_id: &str,
 ) -> Result<(), String> {
     let multipart_size = fs::metadata(multipart_path)
         .map(|m| m.len())
         .unwrap_or(0);
     info!(
-        "Uploading {} ({} bytes) to texhub at URL: {} (multipart stream)",
-        upload_label, multipart_size, upload_url
+        "Uploading {} ({} bytes) to texhub at URL: {} (multipart stream), x-request-id={}",
+        upload_label, multipart_size, upload_url, x_request_id
     );
 
     let file = File::open(multipart_path)
@@ -901,6 +908,7 @@ fn send_multipart_upload_from_file(
 
     match http_client_sync_large_upload()
         .post(upload_url)
+        .headers(construct_headers(Some(x_request_id)))
         .header("Content-Type", content_type)
         .body(file)
         .send()
@@ -936,7 +944,7 @@ fn send_multipart_upload_from_file(
  * Step 5: Upload the compiled PDF file to texhub server via HTTP.
  * Uses multipart form data or binary upload.
  */
-fn upload_file_to_texhub(file_path: &str, project_id: &str) -> Result<(), String> {
+fn upload_file_to_texhub(file_path: &str, project_id: &str, x_request_id: &str) -> Result<(), String> {
     let texhub_api_url = get_app_config("cv.texhub_api_url");
     let upload_url = format!("{}/inner-tex/project/upload-output", texhub_api_url);
 
@@ -949,7 +957,7 @@ fn upload_file_to_texhub(file_path: &str, project_id: &str) -> Result<(), String
 
     let (body, content_type) =
         build_multipart_upload_body(project_id, &file_name, &file_data, "application/pdf");
-    send_multipart_upload(&upload_url, body, content_type, "PDF")
+    send_multipart_upload(&upload_url, body, content_type, "PDF", x_request_id)
 }
 
 fn zip_directory(src_dir: &str, zip_path: &str) -> Result<(), String> {
@@ -1003,7 +1011,11 @@ fn zip_directory(src_dir: &str, zip_path: &str) -> Result<(), String> {
 /**
  * Step 6: Upload the full compile output directory as a zip archive to texhub server.
  */
-fn upload_full_output_to_texhub(file_path: &str, project_id: &str) -> Result<(), String> {
+fn upload_full_output_to_texhub(
+    file_path: &str,
+    project_id: &str,
+    x_request_id: &str,
+) -> Result<(), String> {
     let texhub_api_url = get_app_config("cv.texhub_api_url");
     let upload_url = format!("{}/inner-tex/project/upload-full-output", texhub_api_url);
 
@@ -1032,6 +1044,7 @@ fn upload_full_output_to_texhub(file_path: &str, project_id: &str) -> Result<(),
         &multipart_path,
         content_type,
         "full output",
+        x_request_id,
     );
     let _ = fs::remove_file(&multipart_path);
     result
@@ -1137,7 +1150,11 @@ fn download_and_unzip(
     }
 
     let rt = tokio::runtime::Runtime::new().map_err(|e| format!("create runtime failed: {}", e))?;
-    let zip_path = match rt.block_on(download_tex_project_zip(&params.project_id, &temp_dir)) {
+    let zip_path = match rt.block_on(download_tex_project_zip(
+        &params.project_id,
+        &temp_dir,
+        &params.x_request_id,
+    )) {
         Ok(path) => path,
         Err(e) => {
             error!(
@@ -1221,7 +1238,7 @@ fn do_upload_output_to_texhub(params: &CompileAppParams, compile_dir: &str, exte
     );
     info!("Uploading compiled output from path: {}", pdf_path);
     if Path::new(&pdf_path).exists() {
-        let _ = upload_file_to_texhub(&pdf_path, &params.project_id);
+        let _ = upload_file_to_texhub(&pdf_path, &params.project_id, &params.x_request_id);
     } else {
         warn!("Compiled output not found at: {}", pdf_path);
     }
@@ -1237,7 +1254,7 @@ fn do_upload_full_output_to_texhub(params: &CompileAppParams, compile_dir: &str)
         error!("Failed to zip compile output: {}", e);
         return;
     }
-    match upload_full_output_to_texhub(&zip_path, &params.project_id) {
+    match upload_full_output_to_texhub(&zip_path, &params.project_id, &params.x_request_id) {
         Ok(_) => info!(
             "Full output upload succeeded for project: {}",
             params.project_id

@@ -61,6 +61,7 @@ pub async fn update_queue_compile_result(
         TeXFileCompileStatus::Compiled as i32,
         &params_arc.qid,
         Some(compile_result.unwrap() as i32),
+        &params_arc.x_request_id,
     )
     .await;
     if !u_result {
@@ -79,6 +80,7 @@ pub fn update_queue_compile_result_sync(
         TeXFileCompileStatus::Compiled as i32,
         &params_arc.qid,
         Some(compile_result.unwrap() as i32),
+        &params_arc.x_request_id,
     );
     if !u_result {
         error!("Failed to update result status, params: {:?}", &params_arc)
@@ -93,6 +95,7 @@ pub async fn update_queue_compile_status(
         compile_status as i32,
         &params_arc.qid,
         Some(CompileResult::Unknown as i32),
+        &params_arc.x_request_id,
     )
     .await;
     if !u_result {

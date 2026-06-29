@@ -10,6 +10,7 @@ use crate::{
     },
     render::render_worker::render_impl,
 };
+use crate::model::project::compile_app_params::generate_x_request_id;
 use log::error;
 use reqwest::{
     header::{HeaderMap, HeaderValue, CONTENT_TYPE},
@@ -84,7 +85,7 @@ pub async fn get_queue_cv() {
     let url = format!("{}{}", get_app_config("cv.cv_api_url"), url_path);
     let response = client
         .get(url)
-        .headers(construct_headers())
+        .headers(construct_headers(None))
         .body("{}")
         .send()
         .await;
@@ -117,13 +118,20 @@ pub async fn get_queue_cv() {
     }
 }
 
-fn construct_headers() -> HeaderMap {
+pub fn construct_headers(x_request_id: Option<&str>) -> HeaderMap {
+    let request_id = x_request_id
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(generate_x_request_id);
     let mut headers = HeaderMap::new();
     let token: String = get_app_config("cv.x_access_token").to_owned();
     headers.insert("x-access-token", HeaderValue::from_str(&token).unwrap());
     headers.insert("user-id", HeaderValue::from_static("1"));
     headers.insert("app-id", HeaderValue::from_static("1"));
-    headers.insert("x-request-id", HeaderValue::from_static("reqwest"));
+    headers.insert(
+        "x-request-id",
+        HeaderValue::from_str(&request_id).unwrap(),
+    );
     headers.insert("device-id", HeaderValue::from_static("reqwest"));
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers
@@ -133,7 +141,7 @@ pub async fn get_cv(cv_gen: &CvGen, cv_tpl: CvTemplate) {
     let client = Client::new();
     let url_path = format!("{}{}", "/cv/cv/v1/render-cv/", cv_gen.cv_id);
     let url = format!("{}{}", get_app_config("cv.cv_api_url"), url_path);
-    let response = client.get(url).headers(construct_headers()).send().await;
+    let response = client.get(url).headers(construct_headers(None)).send().await;
     match response {
         Ok(r) => {
             let r: serde_json::Value = r.json().await.unwrap();
@@ -150,7 +158,7 @@ pub async fn get_template(queue_gen: &CvGen) {
     let client = Client::new();
     let url_path = format!("{}{}", "/cv/tpl/v1/", queue_gen.template_id);
     let url = format!("{}{}", get_app_config("cv.cv_api_url"), url_path);
-    let response = client.get(url).headers(construct_headers()).send().await;
+    let response = client.get(url).headers(construct_headers(None)).send().await;
     match response {
         Ok(r) => {
             // the return type of json() would normally be inferred
@@ -182,7 +190,7 @@ pub async fn update_gen_result(id: i64, file_name: &str, tex_file_name: &str) {
     let json_str = serde_json::to_string(&gen_req).unwrap();
     let response = client
         .put(url)
-        .headers(construct_headers())
+        .headers(construct_headers(None))
         .body(json_str)
         .send()
         .await;
@@ -199,6 +207,7 @@ pub async fn update_queue_status(
     comp_status: i32,
     record_id: &i64,
     compile_result: Option<i32>,
+    x_request_id: &str,
 ) -> bool {
     let url_path = format!("{}", "/tex/project/compile/status");
     let url = format!("{}{}", get_app_config("cv.texhub_api_url"), url_path);
@@ -213,7 +222,7 @@ pub async fn update_queue_status(
     };
     let response = http_client(None)
         .put(&url)
-        .headers(construct_headers())
+        .headers(construct_headers(Some(x_request_id)))
         .body(serde_json::to_string(&req_params).unwrap())
         .send()
         .await;
@@ -224,7 +233,8 @@ pub async fn update_queue_status(
                 serde_json::from_str(resp_text.as_str());
             if let Err(parse_err) = comp_resp.as_ref() {
                 error!(
-                    "parse response error,{}, resp text: {}, url: {}",
+                    "parse response error, x-request-id: {}, {}, resp text: {}, url: {}",
+                    x_request_id,
                     parse_err,
                     resp_text.as_str(),
                     url
@@ -233,7 +243,8 @@ pub async fn update_queue_status(
             }
             if !success(&comp_resp.as_ref().unwrap()) {
                 error!(
-                    "update queue status error: {}",
+                    "update queue status error, x-request-id: {}: {}",
+                    x_request_id,
                     serde_json::to_string(&comp_resp.unwrap()).unwrap()
                 );
                 return false;
@@ -241,7 +252,7 @@ pub async fn update_queue_status(
             return true;
         }
         Err(e) => {
-            error!("update queue error: {}", e);
+            error!("update queue error, x-request-id: {}: {}", x_request_id, e);
             return false;
         }
     }
@@ -251,6 +262,7 @@ pub fn update_queue_status_sync(
     comp_status: i32,
     record_id: &i64,
     compile_result: Option<i32>,
+    x_request_id: &str,
 ) -> bool {
     let url_path = format!("{}", "/tex/project/compile/status");
     let url = format!("{}{}", get_app_config("cv.texhub_api_url"), url_path);
@@ -265,7 +277,7 @@ pub fn update_queue_status_sync(
     };
     let response = http_client_sync()
         .put(&url)
-        .headers(construct_headers())
+        .headers(construct_headers(Some(x_request_id)))
         .body(serde_json::to_string(&req_params).unwrap())
         .send();
     match response {
@@ -275,7 +287,8 @@ pub fn update_queue_status_sync(
                 serde_json::from_str(resp_text.as_str());
             if let Err(parse_err) = comp_resp.as_ref() {
                 error!(
-                    "parse response error,{}, resp text: {}, url: {}",
+                    "parse response error, x-request-id: {}, {}, resp text: {}, url: {}",
+                    x_request_id,
                     parse_err,
                     resp_text.as_str(),
                     url
@@ -284,7 +297,8 @@ pub fn update_queue_status_sync(
             }
             if !success(&comp_resp.as_ref().unwrap()) {
                 error!(
-                    "update queue status error: {}",
+                    "update queue status error, x-request-id: {}: {}",
+                    x_request_id,
                     serde_json::to_string(&comp_resp.unwrap()).unwrap()
                 );
                 return false;
@@ -292,7 +306,7 @@ pub fn update_queue_status_sync(
             return true;
         }
         Err(e) => {
-            error!("update queue error: {}", e);
+            error!("update queue error, x-request-id: {}: {}", x_request_id, e);
             return false;
         }
     }

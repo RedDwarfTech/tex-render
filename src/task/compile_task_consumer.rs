@@ -3,10 +3,10 @@ use std::{env, io};
 use crate::render::texhub::pipeline::pipeline_render_works::del_redis_stream;
 use crate::{
     controller::tex::tex_controller::compile_tex_from_mq,
-    model::project::compile_app_params::CompileAppParams,
+    model::project::compile_app_params::{generate_x_request_id, CompileAppParams},
     rest::client::cv_client::update_queue_status,
 };
-use log::{error, warn};
+use log::{error, info, warn};
 use redis::streams::{StreamId, StreamKey, StreamReadOptions, StreamReadReply};
 use redis::Commands;
 use redlock::{Lock, RedLock};
@@ -94,11 +94,15 @@ async fn handle_proj_compile_record(
     sk: &StreamKey,
 ) {
     let param: CompileAppParams = do_task(&stream_id);
+    info!(
+        "handle compile task, x-request-id: {}, qid: {}, project_id: {}",
+        param.x_request_id, param.qid, param.project_id
+    );
     let redis_url = env::var("REDIS_URL").unwrap();
     let client = redis::Client::open(redis_url.as_str()).unwrap();
     let mut con = client.get_connection().unwrap();
     del_redis_stream(&param, &mut con);
-    let u_result = update_queue_status(1, &param.qid, Some(-1)).await;
+    let u_result = update_queue_status(1, &param.qid, Some(-1), &param.x_request_id).await;
     if !u_result {
         // do not return when update failed
         // it will make the redis stream retry and go into a dead loop
@@ -134,6 +138,7 @@ fn do_task(stream_id: &StreamId) -> CompileAppParams {
     let log_file_name = extract_string_value(log_file_value);
     let created_time_value: &redis::Value = stream_id.map.get("proj_created_time").unwrap();
     let proj_created_time = extract_string_value(created_time_value);
+    let x_request_id = resolve_x_request_id(stream_id);
     let param: CompileAppParams = CompileAppParams {
         file_path: file_path.unwrap(),
         out_path: out_path.unwrap(),
@@ -143,8 +148,30 @@ fn do_task(stream_id: &StreamId) -> CompileAppParams {
         version_no: version_no.unwrap(),
         log_file_name: log_file_name.unwrap(),
         proj_created_time: proj_created_time.unwrap().parse().unwrap(),
+        x_request_id,
     };
     return param;
+}
+
+fn resolve_x_request_id(stream_id: &StreamId) -> String {
+    let from_stream = stream_id
+        .map
+        .get("x_request_id")
+        .or_else(|| stream_id.map.get("x-request-id"))
+        .and_then(extract_string_value)
+        .filter(|s| !s.trim().is_empty());
+
+    match from_stream {
+        Some(id) => id,
+        None => {
+            let id = generate_x_request_id();
+            warn!(
+                "x-request-id not provided in redis stream message, generated new x-request-id: {}, stream_id: {}",
+                id, stream_id.id
+            );
+            id
+        }
+    }
 }
 
 fn extract_string_value(value: &redis::Value) -> Option<String> {

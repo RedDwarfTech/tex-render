@@ -1,3 +1,12 @@
+use uuid::Uuid;
+
+fn default_x_request_id() -> String {
+    Uuid::new_v4().to_string()
+}
+
+pub fn generate_x_request_id() -> String {
+    default_x_request_id()
+}
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct CompileAppParams {
@@ -9,4 +18,6 @@ pub struct CompileAppParams {
     pub version_no: String,
     pub log_file_name: String,
     pub proj_created_time: i64,
+    #[serde(default = "default_x_request_id")]
+    pub x_request_id: String,
 }
