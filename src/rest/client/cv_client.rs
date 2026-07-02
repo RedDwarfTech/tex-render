@@ -118,7 +118,7 @@ pub async fn get_queue_cv() {
     }
 }
 
-pub fn construct_headers(x_request_id: Option<&str>) -> HeaderMap {
+pub fn construct_auth_headers(x_request_id: Option<&str>) -> HeaderMap {
     let request_id = x_request_id
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
@@ -133,6 +133,11 @@ pub fn construct_headers(x_request_id: Option<&str>) -> HeaderMap {
         HeaderValue::from_str(&request_id).unwrap(),
     );
     headers.insert("device-id", HeaderValue::from_static("reqwest"));
+    headers
+}
+
+pub fn construct_headers(x_request_id: Option<&str>) -> HeaderMap {
+    let mut headers = construct_auth_headers(x_request_id);
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers
 }
