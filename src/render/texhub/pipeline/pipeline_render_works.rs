@@ -1,5 +1,7 @@
 use crate::controller::tex::tex_controller::update_queue_compile_result_sync;
-use crate::rest::client::cv_client::{construct_headers, http_client_sync, http_client_sync_large_upload};
+use crate::rest::client::cv_client::{
+    construct_auth_headers, construct_headers, http_client_sync, http_client_sync_large_upload,
+};
 use crate::{
     model::project::compile_app_params::CompileAppParams,
     rest::client::cv_client::http_client,
@@ -804,10 +806,16 @@ fn send_multipart_upload(
         "Uploading {} to texhub at URL: {} (multipart manual), x-request-id={}",
         upload_label, upload_url, x_request_id
     );
+    let mut headers = construct_auth_headers(Some(x_request_id));
+    headers.insert(
+        reqwest::header::CONTENT_TYPE,
+        reqwest::header::HeaderValue::from_str(&content_type)
+            .map_err(|e| format!("Invalid multipart Content-Type header: {}", e))?,
+    );
+
     match http_client_sync()
         .post(upload_url)
-        .headers(construct_headers(Some(x_request_id)))
-        .header("Content-Type", content_type)
+        .headers(headers)
         .body(body)
         .send()
     {
@@ -908,10 +916,16 @@ fn send_multipart_upload_from_file(
     let file = File::open(multipart_path)
         .map_err(|e| format!("Failed to open multipart temp file: {}", e))?;
 
+    let mut headers = construct_auth_headers(Some(x_request_id));
+    headers.insert(
+        reqwest::header::CONTENT_TYPE,
+        reqwest::header::HeaderValue::from_str(&content_type)
+            .map_err(|e| format!("Invalid multipart Content-Type header: {}", e))?,
+    );
+
     match http_client_sync_large_upload()
         .post(upload_url)
-        .headers(construct_headers(Some(x_request_id)))
-        .header("Content-Type", content_type)
+        .headers(headers)
         .body(file)
         .send()
     {
