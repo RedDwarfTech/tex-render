@@ -63,7 +63,7 @@ pub fn get_pdf_pos(params: &GetPdfPosParams) -> Vec<PdfPosResp> {
                 let page = synctex_node_page(node);
                 // this code was inspired from synctex synctex main viewer procceed code
                 let h = synctex_node_box_visible_h(node);
-                let v = synctex_node_box_visible_v(node) + synctex_node_box_visible_h(node);
+                let v = synctex_node_box_visible_v(node) + synctex_node_box_visible_depth(node);
                 let x = synctex_node_visible_h(node);
                 let y = synctex_node_visible_v(node);
                 let width = synctex_node_box_visible_width(node).abs();

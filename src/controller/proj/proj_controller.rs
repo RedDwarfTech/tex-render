@@ -8,6 +8,7 @@ use crate::{
     service::project_service::{get_pdf_pos, get_src_pos},
 };
 
+/// Get the PDF position, the client will use this data to highlight the text in the PDF file.
 async fn get_pdf_position(form: web::Query<GetPdfPosParams>) -> HttpResponse {
     let pos = get_pdf_pos(&form.0);
     box_actix_rest_response(pos)
