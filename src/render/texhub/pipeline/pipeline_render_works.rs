@@ -7,7 +7,7 @@ use crate::{
     rest::client::cv_client::http_client,
     util::request_context::with_request_id,
 };
-use log::{error, info, warn};
+use log::{error, info, warn, debug};
 use redis::{self, Connection};
 use rust_wheel::{
     common::util::rd_file_util::join_paths,
@@ -736,7 +736,7 @@ fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams, con: 
             Ok(entry_id) => {
                 pushed += 1;
                 if pushed == 1 {
-                    info!(
+                    debug!(
                         "Redis XADD started: stream={}, project_id={}, qid={}, first_entry_id={}",
                         stream_key, params.project_id, params.qid, entry_id
                     );
