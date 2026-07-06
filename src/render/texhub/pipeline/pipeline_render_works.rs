@@ -1425,7 +1425,7 @@ fn push_xelatex_log_delta(
     }
     *pos = f.metadata().map(|m| m.len()).unwrap_or(*pos);
     if !contents.is_empty() {
-        info!(
+        debug!(
             "xelatex log delta: path={}, offset {} -> {} ({} bytes, {} lines)",
             xelatex_log_path,
             start_pos,
