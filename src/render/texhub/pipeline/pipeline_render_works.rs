@@ -262,6 +262,15 @@ async fn download_tex_project_zip(
             match resp.bytes().await {
                 Ok(bytes) => {
                     let byte_len = bytes.len();
+                    if let Some(parent) = Path::new(&zip_path).parent() {
+                        if let Err(e) = fs::create_dir_all(parent) {
+                            let detail = format!(
+                                "Failed to create zip parent dir before write\n  url: {url}\n  zip_path: {zip_path}\n  error: {e:#}"
+                            );
+                            error!("{}", detail);
+                            return Err(detail);
+                        }
+                    }
                     match fs::write(&zip_path, bytes) {
                         Ok(_) => {
                             info!(
@@ -1153,7 +1162,10 @@ fn download_and_unzip(
     compile_dir: &str,
     unzip_dir: &str,
 ) -> Result<(), String> {
-    let temp_dir = format!("/tmp/texhub_downloads_{}", params.project_id);
+    let temp_dir = format!(
+        "/tmp/texhub_downloads_{}_{}",
+        params.project_id, params.qid
+    );
     info!(
         "download_and_unzip start: project_id={}, qid={}, compile_dir={}, unzip_dir={}, temp_dir={}",
         params.project_id, params.qid, compile_dir, unzip_dir, temp_dir
