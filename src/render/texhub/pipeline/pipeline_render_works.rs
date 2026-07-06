@@ -760,7 +760,7 @@ fn write_log_to_redis_stream(log_content: &str, params: &CompileAppParams, con: 
         }
     }
 
-    info!(
+    debug!(
         "Redis XADD batch done: stream={}, lines_pushed={}/{}, bytes={}",
         stream_key,
         pushed,
