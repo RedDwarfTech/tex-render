@@ -220,7 +220,7 @@ async fn download_tex_project_zip(
     temp_dir: &str,
     x_request_id: &str,
 ) -> Result<String, String> {
-    const DOWNLOAD_TIMEOUT_SECS: u64 = 30;
+    const DOWNLOAD_TIMEOUT_SECS: u64 = 120;
     let texhub_api_url = get_app_config("cv.texhub_api_url");
     let url = format!("{}/inner-tex/project/download", texhub_api_url);
     let zip_path = format!("{}/{}.zip", temp_dir, project_id);
