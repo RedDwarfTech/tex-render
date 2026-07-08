@@ -1,19 +1,19 @@
-use log::{error, info};
+use log::error;
 use rust_wheel::{
     common::util::response_handler::success, config::app::app_conf_reader::get_app_config,
     model::response::api_response::ApiResponse,
 };
 
-use crate::rest::client::cv_client::http_client;
+use crate::rest::client::cv_client::{construct_headers, http_client};
 
-pub async fn update_expired_job() {
+pub async fn update_expired_job(x_request_id: &str) {
     let url_path = "/inner-tex/queue/expire-check";
     let url = format!("{}{}", get_app_config("cv.texhub_api_url"), url_path);
 
     let request_body = "{\"expire_time:\": 1}";
     let response = match http_client(None)
         .post(url.clone())
-        .header("Content-Type", "application/json")
+        .headers(construct_headers(Some(x_request_id)))
         .body(request_body.to_string())
         .send()
         .await
@@ -22,7 +22,10 @@ pub async fn update_expired_job() {
             r
         },
         Err(e) => {
-            error!("Error sending request to texhub: {}, url: {}", e, url);
+            error!(
+                "Error sending request to texhub: {}, url: {}, x-request-id: {}",
+                e, url, x_request_id
+            );
             return;
         }
     };

@@ -1,13 +1,15 @@
+use crate::model::project::compile_app_params::generate_x_request_id;
 use crate::rest::client::texhub_queue_client::update_expired_job;
-use std::time::Duration;
-use log::{info, warn};
-use tokio::time;
+use crate::util::request_context::run_with_request_id;
 
 pub async fn get_expired_queue_task() {
-    let cv = update_expired_job();
-    cv.await;
-    // make other task could be invoke
-    tokio::task::yield_now().await;
+    let x_request_id = generate_x_request_id();
+    run_with_request_id(x_request_id.clone(), || async move {
+        update_expired_job(&x_request_id).await;
+        // make other task could be invoke
+        tokio::task::yield_now().await;
+    })
+    .await;
 }
 
 /**
