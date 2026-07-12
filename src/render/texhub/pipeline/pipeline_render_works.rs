@@ -520,6 +520,8 @@ async fn run_latexmk_and_log(
         .arg("-xelatex")
         .arg("-interaction=nonstopmode")
         .arg("-synctex=1")
+        .arg("-e")
+        .arg(r"$max_repeat = 20")
         .arg(tex_file)
         .current_dir(compile_dir)
         .stdout(Stdio::from(latexmk_log))
