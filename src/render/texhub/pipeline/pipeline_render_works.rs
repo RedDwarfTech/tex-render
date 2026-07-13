@@ -2,6 +2,7 @@ use crate::controller::tex::tex_controller::update_queue_compile_result_sync;
 use crate::rest::client::cv_client::{
     construct_auth_headers, construct_headers, http_client_sync, http_client_sync_large_upload,
 };
+use crate::rest::client::texhub_queue_client::update_queue_start_time_sync;
 use crate::{
     model::project::compile_app_params::CompileAppParams,
     rest::client::cv_client::http_client,
@@ -538,6 +539,8 @@ async fn run_latexmk_and_log(
             return Err(format!("Failed to start latexmk process: {}", e));
         }
     };
+
+    update_queue_start_time_sync(&params.qid, 0, &params.x_request_id);
 
     let status = match child.wait() {
         Ok(s) => s,

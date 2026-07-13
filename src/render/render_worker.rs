@@ -11,6 +11,7 @@ use crate::{
     },
     rest::client::cv_client::update_gen_result
 };
+use crate::rest::client::texhub_queue_client::update_queue_start_time_sync;
 use chrono::{Datelike, Utc};
 use log::{error, info, warn};
 use rust_wheel::{
@@ -102,6 +103,7 @@ pub fn render_texhub_project_mq(params: &CompileAppParams) -> Option<CompileResu
     // we remove the -output-directory because:
     // 1. facing this issue: https://tex.stackexchange.com/questions/697033/is-it-possible-to-auto-create-dist-folder-when-not-exists-using-xelatex-compile
     // 2. maybe output-directory have some compatible issue with latex compile engine
+    update_queue_start_time_sync(&params.qid, 0, &params.x_request_id);
     let cmd = Command::new("xelatex")
         .arg("-synctex=1")
         //.arg("-output-directory")
