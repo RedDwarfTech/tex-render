@@ -215,7 +215,7 @@ pub async fn render_texhub_project(parmas: &CompileAppParams) -> Option<CompileO
             );
             let resp = CompileOutput {
                 project_id: parmas.project_id.clone(),
-                out_path: parmas.version_no.clone(),
+                out_path: parmas.version_no.to_string(),
                 req_time: parmas.req_time.clone(),
             };
             return Some(resp);

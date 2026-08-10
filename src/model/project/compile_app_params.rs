@@ -15,7 +15,7 @@ pub struct CompileAppParams {
     pub project_id: String,
     pub req_time: i64,
     pub qid: i64,
-    pub version_no: String,
+    pub version_no: i64,
     pub log_file_name: String,
     pub proj_created_time: i64,
     #[serde(default = "default_x_request_id")]

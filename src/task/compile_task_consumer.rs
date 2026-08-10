@@ -149,7 +149,7 @@ fn do_task(stream_id: &StreamId) -> CompileAppParams {
         project_id: project_id.unwrap(),
         req_time: req_time.unwrap().parse().unwrap(),
         qid: qid.unwrap().parse().unwrap(),
-        version_no: version_no.unwrap(),
+        version_no: version_no.unwrap().parse().unwrap(),
         log_file_name: log_file_name.unwrap(),
         proj_created_time: proj_created_time.unwrap().parse().unwrap(),
         x_request_id,
